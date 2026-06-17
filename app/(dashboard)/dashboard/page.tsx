@@ -35,16 +35,16 @@ export default function DashboardPage() {
   async function loadDashboard() {
     setLoading(true)
     try {
+      // Executing concurrent database lookups securely
       const [
         itemsRes, grnRes, voucherRes, suppRes, deptRes,
-        lowStockRes, recentGRNRes, recentVoucherRes, catRes
+        recentGRNRes, recentVoucherRes, catRes
       ] = await Promise.all([
-        supabase.from('inventory_items').select('id, quantity_in_stock, reorder_level, total_value').eq('is_active', true),
+        supabase.from('inventory_items').select('id, name, item_code, quantity_in_stock, reorder_level, total_value, unit:units(abbreviation)').eq('is_active', true),
         supabase.from('goods_received_notes').select('id, status, total_value, received_date').eq('status', 'approved'),
         supabase.from('issue_vouchers').select('id, status, total_value, issued_date').eq('status', 'issued'),
         supabase.from('suppliers').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('departments').select('id', { count: 'exact', head: true }).eq('is_active', true),
-        supabase.from('inventory_items').select('id, name, item_code, quantity_in_stock, reorder_level, unit:units(abbreviation)').eq('is_active', true).lte('quantity_in_stock', supabase.rpc).order('quantity_in_stock').limit(5),
         supabase.from('goods_received_notes').select('id, grn_number, supplier:suppliers(name), total_value, status, received_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('issue_vouchers').select('id, voucher_number, department:departments(name), total_value, status, request_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('inventory_items').select('category:categories(name), total_value').eq('is_active', true),
@@ -85,8 +85,11 @@ export default function DashboardPage() {
       })
       setCategoryData(Object.entries(catMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 6))
 
-      // Low stock - manual filter since we can't use rpc inline
-      const lowItems = items.filter(i => i.quantity_in_stock <= i.reorder_level).slice(0, 5)
+      // Low stock - filtered and sorted locally to eliminate 400 parameter errors
+      const lowItems = items
+        .filter(i => i.quantity_in_stock <= i.reorder_level)
+        .sort((a, b) => a.quantity_in_stock - b.quantity_in_stock)
+        .slice(0, 5)
       setLowStockItems(lowItems)
 
       setRecentGRNs(recentGRNRes.data ?? [])
@@ -104,6 +107,8 @@ export default function DashboardPage() {
         monthly_receipts: grns.slice(-30).reduce((s, g) => s + (g.total_value ?? 0), 0),
         monthly_issues: vouchers.slice(-30).reduce((s, v) => s + (v.total_value ?? 0), 0),
       })
+    } catch (err) {
+      console.error('Error loading dashboard statistics:', err)
     } finally {
       setLoading(false)
     }
