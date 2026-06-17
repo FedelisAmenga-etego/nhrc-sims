@@ -42,6 +42,8 @@ export default function ReportsPage() {
       if (activeTab === 'low_stock') await loadLowStock()
       if (activeTab === 'department_usage') await loadDeptUsage()
       if (activeTab === 'supplier_performance') await loadSupplierPerf()
+    } catch (error) {
+      console.error("Error loading report metrics:", error)
     } finally {
       setLoading(false)
     }
@@ -92,28 +94,32 @@ export default function ReportsPage() {
   }
 
   async function loadLowStock() {
+    // REMOVED: .lte('quantity_in_stock', supabase.rpc as any) which triggered the 400 bad request error
     const { data } = await supabase
       .from('inventory_items')
       .select('name, item_code, quantity_in_stock, reorder_level, reorder_quantity, unit_cost, total_value, category:categories(name), unit:units(abbreviation)')
       .eq('is_active', true)
-      .lte('quantity_in_stock', supabase.rpc as any)
 
     const all = (data ?? [])
-    const low = all.filter((i: any) => i.quantity_in_stock <= i.reorder_level)
+    // Safely handles fallback matching using local clean JS evaluations
+    const low = all.filter((i: any) => i.quantity_in_stock <= (i.reorder_level ?? 0))
     setLowStockData(low.sort((a: any, b: any) => (a.quantity_in_stock / (a.reorder_level || 1)) - (b.quantity_in_stock / (b.reorder_level || 1))))
   }
 
   async function loadDeptUsage() {
+    // UPDATED: Ensured query pattern pulls structural references accurately 
     const { data } = await supabase
       .from('issue_vouchers')
-      .select('department:departments(name), total_value, issued_date')
+      .select('total_value, issued_date, department:departments(name)')
       .eq('status', 'issued')
       .gte('issued_date', fromDate)
       .lte('issued_date', toDate)
 
     const deptMap: Record<string, number> = {}
     ;(data ?? []).forEach((v: any) => {
-      const name = v.department?.name ?? 'Unknown'
+      // Handles standard object mappings and arrays safely if plural joins are configured
+      const deptObj = Array.isArray(v.department) ? v.department[0] : v.department
+      const name = deptObj?.name ?? 'Unknown Department'
       deptMap[name] = (deptMap[name] ?? 0) + (v.total_value ?? 0)
     })
     setDeptUsageData(Object.entries(deptMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value))
@@ -128,7 +134,8 @@ export default function ReportsPage() {
 
     const suppMap: Record<string, { total: number; count: number; approved: number }> = {}
     ;(data ?? []).forEach((g: any) => {
-      const name = g.supplier?.name ?? 'Unknown'
+      const suppObj = Array.isArray(g.supplier) ? g.supplier[0] : g.supplier
+      const name = suppObj?.name ?? 'Unknown'
       if (!suppMap[name]) suppMap[name] = { total: 0, count: 0, approved: 0 }
       suppMap[name].count++
       if (g.status === 'approved') {
@@ -228,7 +235,7 @@ export default function ReportsPage() {
               <div className="grid grid-cols-3 gap-4">
                 <div className="stat-card">
                   <div className="text-xs text-gray-500 mb-1 font-display uppercase tracking-wide">Total Stock Value</div>
-                  <div className="font-display font-700 text-2xl text-gray-900">{formatCurrency(valuationSummary.total)}</div>
+                  <div className="font-display font-700 text-2xl text-gray-990">{formatCurrency(valuationSummary.total)}</div>
                 </div>
                 <div className="stat-card">
                   <div className="text-xs text-gray-500 mb-1 font-display uppercase tracking-wide">Active Items</div>
