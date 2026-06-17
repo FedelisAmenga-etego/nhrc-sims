@@ -132,13 +132,17 @@ function SupplierModal({ supplier, onClose, onSave }: { supplier: Supplier | nul
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="card w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+    // FIX: Changed items-center to items-start and overflow-y-auto on the viewport backdrop layout
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/40 overflow-y-auto">
+      {/* FIX: Set clear dimensional max heights on the inner card viewport shell directly */}
+      <div className="card w-full max-w-xl my-4 md:my-8 flex flex-col max-h-[calc(100vh-4rem)] overflow-hidden">
+        <div className="flex items-center justify-between p-6 border-b border-gray-100 flex-shrink-0">
           <h2 className="font-display font-700 text-xl text-gray-900">{supplier ? 'Edit Supplier' : 'Add Supplier'}</h2>
           <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
         </div>
-        <form onSubmit={handleSave} className="p-6 space-y-4">
+        
+        {/* FIX: Set overflow-y-auto directly on the form so the content box scrolls cleanly within bounds */}
+        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="block text-sm font-600 text-gray-700 mb-1.5">Supplier Name *</label>
@@ -154,7 +158,7 @@ function SupplierModal({ supplier, onClose, onSave }: { supplier: Supplier | nul
             <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Notes</label><textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="form-input" rows={2} /></div>
           </div>
           {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">{error}</div>}
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-3 pt-2 border-t border-gray-50 flex-shrink-0">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Saving…' : supplier ? 'Update' : 'Add Supplier'}</button>
           </div>
