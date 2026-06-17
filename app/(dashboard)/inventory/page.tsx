@@ -2,12 +2,11 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatNumber, getStockStatus, exportToCSV, generateExportFilename } from '@/lib/utils'
 import {
-  Plus, Search, Filter, Download, Edit2, Trash2,
-  AlertTriangle, X, ChevronLeft, ChevronRight, Package, RefreshCw
+  Plus, Search, Download, Edit2, Trash2, X, ChevronLeft, ChevronRight, Package, RefreshCw
 } from 'lucide-react'
 import type { InventoryItem, Category, Unit } from '@/types'
 
@@ -47,19 +46,36 @@ export default function InventoryPage() {
       .select('*, category:categories(id,name), unit:units(id,name,abbreviation)', { count: 'exact' })
       .eq('is_active', true)
       .order('name')
-      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
 
     if (search) q = q.ilike('name', `%${search}%`)
     if (categoryFilter) q = q.eq('category_id', categoryFilter)
-    if (stockFilter === 'low_stock') q = q.gt('quantity_in_stock', 0).lte('quantity_in_stock', supabase.rpc as any)
-    // Manual filter for stock status after fetch
+
+    // Note: Server-side pagination bounds are restricted when client-filtering non-indexed parameters
+    if (!stockFilter) {
+      q = q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
+    }
+
     const { data, count } = await q
     let filtered = data ?? []
-    if (stockFilter === 'low_stock') filtered = filtered.filter(i => i.quantity_in_stock > 0 && i.quantity_in_stock <= i.reorder_level)
-    if (stockFilter === 'out_of_stock') filtered = filtered.filter(i => i.quantity_in_stock <= 0)
-    if (stockFilter === 'in_stock') filtered = filtered.filter(i => i.quantity_in_stock > i.reorder_level)
-    setItems(filtered)
-    setTotal(count ?? 0)
+
+    // Clean Local Evaluation Filters - Completely eliminates PostgREST 400 runtime validation errors
+    if (stockFilter === 'low_stock') {
+      filtered = filtered.filter(i => i.quantity_in_stock > 0 && i.quantity_in_stock <= i.reorder_level)
+    } else if (stockFilter === 'out_of_stock') {
+      filtered = filtered.filter(i => i.quantity_in_stock <= 0)
+    } else if (stockFilter === 'in_stock') {
+      filtered = filtered.filter(i => i.quantity_in_stock > i.reorder_level)
+    }
+
+    // Adjust counts safely for active display
+    if (stockFilter) {
+      setItems(filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE))
+      setTotal(filtered.length)
+    } else {
+      setItems(filtered)
+      setTotal(count ?? 0)
+    }
+    
     setLoading(false)
   }
 
