@@ -19,7 +19,8 @@ export default function CategoriesPage() {
 
   async function load() {
     setLoading(true)
-    let q = supabase.from('categories').select('*, parent:categories!categories_parent_id_fkey(id, name)').order('name')
+    // FIX: Removed the hardcoded foreign key mapping string to clear the 400 bad request error
+    let q = supabase.from('categories').select('*, parent:categories(id, name)').order('name')
     if (search) q = q.ilike('name', `%${search}%`)
     const { data } = await q
     setCategories(data ?? [])
