@@ -132,38 +132,94 @@ function SupplierModal({ supplier, onClose, onSave }: { supplier: Supplier | nul
   }
 
   return (
-    // Backdrop overlay is now fully scrollable natively
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/40 overflow-y-auto">
-      {/* Card wrapper height restrictions are removed so it opens up naturally down the viewport */}
-      <div className="card w-full max-w-xl my-4 md:my-10 transition-all">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="font-display font-700 text-xl text-gray-900">{supplier ? 'Edit Supplier' : 'Add Supplier'}</h2>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      {/* Container with a defined layout flow to prevent truncation */}
+      <div className="card w-full max-w-2xl flex flex-col max-h-[90vh] shadow-xl animate-in fade-in zoom-in-95 duration-150">
+        
+        {/* Sticky Header */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-white rounded-t-xl flex-shrink-0">
+          <div>
+            <h2 className="font-display font-700 text-lg text-gray-900">
+              {supplier ? 'Edit Supplier Details' : 'Register New Supplier'}
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">Fill out information below to manage procurement profiles.</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+            <X size={18} />
+          </button>
         </div>
         
-        <form onSubmit={handleSave} className="p-6 space-y-5">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Supplier Name *</label>
-              <input value={form.name} onChange={e => set('name', e.target.value)} className="form-input" required />
+        {/* Scrollable Form Body with clean semantic sectioning */}
+        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-6 max-h-[65vh] bg-gray-50/50">
+          
+          {/* Section 1: Basic Info */}
+          <div className="space-y-3 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <h3 className="text-xs font-700 text-blue-600 uppercase tracking-wider">Primary Identity</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-600 text-gray-700 mb-1">Supplier Name *</label>
+                <input value={form.name} onChange={e => set('name', e.target.value)} className="form-input w-full" placeholder="e.g. Enterprise Logistics Ltd" required />
+              </div>
             </div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Contact Person</label><input value={form.contact_person} onChange={e => set('contact_person', e.target.value)} className="form-input" /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Phone</label><input value={form.phone} onChange={e => set('phone', e.target.value)} className="form-input" /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Email</label><input type="email" value={form.email} onChange={e => set('email', e.target.value)} className="form-input" /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">TIN Number</label><input value={form.tin_number} onChange={e => set('tin_number', e.target.value)} className="form-input" /></div>
-            <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Address</label><textarea value={form.address} onChange={e => set('address', e.target.value)} className="form-input" rows={2} /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Bank Name</label><input value={form.bank_name} onChange={e => set('bank_name', e.target.value)} className="form-input" /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Bank Account</label><input value={form.bank_account} onChange={e => set('bank_account', e.target.value)} className="form-input" /></div>
-            <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Notes</label><textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="form-input" rows={2} /></div>
           </div>
-          
+
+          {/* Section 2: Contact & Location */}
+          <div className="space-y-3 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <h3 className="text-xs font-700 text-blue-600 uppercase tracking-wider">Contact & Location</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-600 text-gray-700 mb-1">Contact Person</label>
+                <input value={form.contact_person} onChange={e => set('contact_person', e.target.value)} className="form-input w-full" placeholder="Full Name" />
+              </div>
+              <div>
+                <label className="block text-xs font-600 text-gray-700 mb-1">Phone Number</label>
+                <input value={form.phone} onChange={e => set('phone', e.target.value)} className="form-input w-full" placeholder="e.g. +233..." />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-600 text-gray-700 mb-1">Email Address</label>
+                <input type="email" value={form.email} onChange={e => set('email', e.target.value)} className="form-input w-full" placeholder="supplier@example.com" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-600 text-gray-700 mb-1">Physical Address</label>
+                <textarea value={form.address} onChange={e => set('address', e.target.value)} className="form-input w-full" rows={2} placeholder="Street name, City, Region" />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Financials & Notes */}
+          <div className="space-y-3 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <h3 className="text-xs font-700 text-blue-600 uppercase tracking-wider">Financials & Logistics</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-600 text-gray-700 mb-1">TIN Number</label>
+                <input value={form.tin_number} onChange={e => set('tin_number', e.target.value)} className="form-input w-full" placeholder="Tax Identification Number" />
+              </div>
+              <div>
+                <label className="block text-xs font-600 text-gray-700 mb-1">Bank Name</label>
+                <input value={form.bank_name} onChange={e => set('bank_name', e.target.value)} className="form-input w-full" placeholder="e.g. GCB Bank" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-600 text-gray-700 mb-1">Bank Account Number</label>
+                <input value={form.bank_account} onChange={e => set('bank_account', e.target.value)} className="form-input w-full" placeholder="Account Number" />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-xs font-600 text-gray-700 mb-1">Internal Notes</label>
+                <textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="form-input w-full" rows={2} placeholder="Delivery schedules, alternative terms, etc." />
+              </div>
+            </div>
+          </div>
+
           {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">{error}</div>}
-          
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Saving…' : supplier ? 'Update' : 'Add Supplier'}</button>
-          </div>
         </form>
+
+        {/* Sticky Footer */}
+        <div className="flex justify-end gap-3 p-4 border-t border-gray-100 bg-white rounded-b-xl flex-shrink-0">
+          <button type="button" onClick={onClose} className="btn-secondary px-5">Cancel</button>
+          <button type="submit" onClick={handleSave} disabled={saving} className="btn-primary px-5 shadow-sm">
+            {saving ? 'Saving…' : supplier ? 'Update Profile' : 'Save Supplier'}
+          </button>
+        </div>
+
       </div>
     </div>
   )
