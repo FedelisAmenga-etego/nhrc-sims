@@ -40,7 +40,14 @@ export default function StockInPage() {
     setLoading(true)
     let q = supabase
       .from('goods_received_notes')
-      .select('*, supplier:suppliers(id,name), received_by_profile:profiles!goods_received_notes_received_by_fkey(id,full_name), items:grn_items(id)', { count: 'exact' })
+      .select(`
+        *, 
+        supplier:suppliers(id,name), 
+        received_by_profile:profiles!goods_received_notes_received_by_fkey(id,full_name), 
+        items:grn_items(
+          item:inventory_items(name)
+        )
+      `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
 
@@ -116,6 +123,7 @@ export default function StockInPage() {
               <tr>
                 <th>GRN Number</th>
                 <th>Supplier</th>
+                <th>Items Received</th>
                 <th>Date Received</th>
                 <th>Invoice No</th>
                 <th>PO Number</th>
@@ -127,51 +135,61 @@ export default function StockInPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-12 text-gray-400">
+                <tr><td colSpan={10} className="text-center py-12 text-gray-400">
                   <RefreshCw size={18} className="inline animate-spin mr-2" />Loading…
                 </td></tr>
               ) : grns.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-gray-400">
+                <tr><td colSpan={10} className="text-center py-12 text-gray-400">
                   <ArrowDownToLine size={32} className="mx-auto mb-2 opacity-30" />No GRNs found
                 </td></tr>
-              ) : grns.map(grn => (
-                <tr key={grn.id}>
-                  <td><span className="font-mono text-sm font-700 text-blue-700">{grn.grn_number || 'DRAFT'}</span></td>
-                  <td className="font-600 text-gray-800">{(grn as any).supplier?.name ?? '—'}</td>
-                  <td className="text-gray-600">{formatDate(grn.received_date)}</td>
-                  <td className="text-gray-500 text-sm">{grn.invoice_number ?? '—'}</td>
-                  <td className="text-gray-500 text-sm">{grn.purchase_order_number ?? '—'}</td>
-                  <td className="text-gray-600 text-sm">{(grn as any).received_by_profile?.full_name ?? '—'}</td>
-                  <td className="text-right font-700 text-gray-800">{formatCurrency(grn.total_value)}</td>
-                  <td><StatusBadge status={grn.status} /></td>
-                  <td>
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => setViewGRN(grn)}
-                        className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View">
-                        <Eye size={14} />
-                      </button>
-                      {grn.status === 'submitted' && canApprove && (
-                        <>
-                          <button onClick={() => updateStatus(grn.id, 'approved', userProfile!.id)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve & Commit Stock">
-                            <CheckCircle size={14} />
-                          </button>
-                          <button onClick={() => updateStatus(grn.id, 'rejected', userProfile!.id)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Reject">
-                            <XCircle size={14} />
-                          </button>
-                        </>
-                      )}
-                      {grn.status === 'draft' && (
-                        <button onClick={() => updateStatus(grn.id, 'submitted', userProfile?.id ?? '')}
-                          className="p-1.5 rounded-lg text-xs font-600 text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded shadow-sm transition-colors" title="Submit for Approval">
-                          Submit
+              ) : grns.map(grn => {
+                const itemsList = (grn as any).items
+                  ?.map((line: any) => line.item?.name)
+                  .filter(Boolean)
+                  .join(', ')
+
+                return (
+                  <tr key={grn.id}>
+                    <td><span className="font-mono text-sm font-700 text-blue-700">{grn.grn_number || 'DRAFT'}</span></td>
+                    <td className="font-600 text-gray-800">{(grn as any).supplier?.name ?? '—'}</td>
+                    <td className="text-gray-700 text-sm max-w-[180px] truncate font-500" title={itemsList}>
+                      {itemsList || '—'}
+                    </td>
+                    <td className="text-gray-600">{formatDate(grn.received_date)}</td>
+                    <td className="text-gray-500 text-sm">{grn.invoice_number ?? '—'}</td>
+                    <td className="text-gray-500 text-sm">{grn.purchase_order_number ?? '—'}</td>
+                    <td className="text-gray-600 text-sm">{(grn as any).received_by_profile?.full_name ?? '—'}</td>
+                    <td className="text-right font-700 text-gray-800">{formatCurrency(grn.total_value)}</td>
+                    <td><StatusBadge status={grn.status} /></td>
+                    <td>
+                      <div className="flex justify-end gap-1">
+                        <button onClick={() => setViewGRN(grn)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View">
+                          <Eye size={14} />
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {grn.status === 'submitted' && canApprove && (
+                          <>
+                            <button onClick={() => updateStatus(grn.id, 'approved', userProfile!.id)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve & Commit Stock">
+                              <CheckCircle size={14} />
+                            </button>
+                            <button onClick={() => updateStatus(grn.id, 'rejected', userProfile!.id)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Reject">
+                              <XCircle size={14} />
+                            </button>
+                          </>
+                        )}
+                        {grn.status === 'draft' && (
+                          <button onClick={() => updateStatus(grn.id, 'submitted', userProfile?.id ?? '')}
+                            className="p-1.5 text-xs font-600 text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded shadow-sm transition-colors" title="Submit for Approval">
+                            Submit
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -245,7 +263,6 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
     setLineItems(l => l.filter((_, idx) => idx !== i))
   }
 
-  // Refactored to fetch pricing defaults intelligently on selection changes
   function updateLine(i: number, k: string, v: string) {
     setLineItems(l => l.map((line, idx) => {
       if (idx !== i) return line
@@ -266,7 +283,6 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
     setSaving(true)
     setError('')
     try {
-      // Temporary sequential tracking reference string generation logic
       const trackingRef = `GRN-TMP-${Math.floor(100000 + Math.random() * 900000)}`
 
       const { data: grn, error: grnErr } = await supabase.from('goods_received_notes').insert({
@@ -303,8 +319,6 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="card w-full max-w-5xl flex flex-col max-h-[90vh] shadow-xl animate-in zoom-in-95">
-        
-        {/* Sticky Form Header Container */}
         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-white rounded-t-xl flex-shrink-0">
           <div>
             <h2 className="font-display font-700 text-lg text-gray-900">New Goods Received Note</h2>
@@ -315,10 +329,7 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
           </button>
         </div>
 
-        {/* Scrollable Document Field Area */}
         <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/50 max-h-[68vh]">
-          
-          {/* Metadata Section */}
           <div className="p-4 bg-white rounded-xl border border-gray-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-600 text-gray-700 mb-1">Supplier *</label>
@@ -349,7 +360,6 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
             </div>
           </div>
 
-          {/* Lines Table Layout wrapper */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-700 text-blue-600 uppercase tracking-wider">Items Received Entry Matrix</h3>
@@ -407,7 +417,6 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
           {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">{error}</div>}
         </form>
 
-        {/* Sticky Confirmation Footer */}
         <div className="flex justify-end gap-3 p-4 border-t border-gray-100 bg-white rounded-b-xl flex-shrink-0">
           <button type="button" onClick={onClose} className="btn-secondary px-5">Cancel</button>
           <button type="submit" onClick={handleSave} disabled={saving} className="btn-primary px-5 shadow-sm">
