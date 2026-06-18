@@ -414,7 +414,7 @@ function VoucherViewModal({ voucher, onClose }: { voucher: any; onClose: () => v
                   <td colSpan={5} className="text-right font-700 text-gray-700 py-3 px-4">Grand Total:</td>
                   <td className="text-right font-700 text-gray-900 py-3 px-4">{formatCurrency(full.total_value)}</td>
                 </tr>
-              </tbody>
+              </tfoot>
             </table>
           </div>
         )}
