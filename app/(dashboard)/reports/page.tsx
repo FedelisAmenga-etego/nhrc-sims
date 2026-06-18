@@ -6,11 +6,11 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatNumber, formatDate, exportToCSV, generateExportFilename } from '@/lib/utils'
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend
 } from 'recharts'
 import { Download, RefreshCw, BarChart2, TrendingUp, Package, AlertTriangle } from 'lucide-react'
-import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns'
+import { format, subMonths, startOfMonth, endOfMonth, parseISO, endOfDay } from 'date-fns'
 
 const COLORS = ['#1a3a6b', '#c8963e', '#0e8a6e', '#7c3aed', '#dc2626', '#0891b2', '#d97706', '#059669']
 
@@ -74,55 +74,73 @@ export default function ReportsPage() {
 
   async function loadMovement() {
     const months: { label: string; receipts: number; issues: number }[] = []
-    for (let i = 5; i >= 0; i--) {
-      const d = subMonths(new Date(), i)
+    
+    // Request historical timelines in parallel efficiently
+    const promises = Array.from({ length: 6 }).map(async (_, index) => {
+      const d = subMonths(new Date(), index)
       const start = format(startOfMonth(d), 'yyyy-MM-dd')
       const end = format(endOfMonth(d), 'yyyy-MM-dd')
       const label = format(d, 'MMM yyyy')
 
       const [grnRes, issRes] = await Promise.all([
-        supabase.from('goods_received_notes').select('total_value').eq('status', 'approved').gte('received_date', start).lte('received_date', end),
-        supabase.from('issue_vouchers').select('total_value').eq('status', 'issued').gte('issued_date', start).lte('issued_date', end),
+        supabase.from('goods_received_notes')
+          .select('total_value')
+          .in('status', ['approved', 'APPROVED'])
+          .gte('received_date', start)
+          .lte('received_date', end),
+        supabase.from('issue_vouchers')
+          .select('total_value')
+          .in('status', ['issued', 'ISSUED', 'approved', 'APPROVED'])
+          .gte('issued_date', start)
+          .lte('issued_date', end),
       ])
-      months.push({
+
+      return {
+        index,
         label,
         receipts: (grnRes.data ?? []).reduce((s, g) => s + (g.total_value ?? 0), 0),
         issues: (issRes.data ?? []).reduce((s, v) => s + (v.total_value ?? 0), 0),
-      })
-    }
-    setMovementData(months)
+      }
+    })
+
+    const resolvedMonths = await Promise.all(promises)
+    // Maintain chronological timeline order (past to present)
+    resolvedMonths.sort((a, b) => b.index - a.index)
+    setMovementData(resolvedMonths.map(({ label, receipts, issues }) => ({ label, receipts, issues })))
   }
 
   async function loadLowStock() {
-    // REMOVED: .lte('quantity_in_stock', supabase.rpc as any) which triggered the 400 bad request error
     const { data } = await supabase
       .from('inventory_items')
       .select('name, item_code, quantity_in_stock, reorder_level, reorder_quantity, unit_cost, total_value, category:categories(name), unit:units(abbreviation)')
       .eq('is_active', true)
 
     const all = (data ?? [])
-    // Safely handles fallback matching using local clean JS evaluations
     const low = all.filter((i: any) => i.quantity_in_stock <= (i.reorder_level ?? 0))
     setLowStockData(low.sort((a: any, b: any) => (a.quantity_in_stock / (a.reorder_level || 1)) - (b.quantity_in_stock / (b.reorder_level || 1))))
   }
 
   async function loadDeptUsage() {
-    // UPDATED: Ensured query pattern pulls structural references accurately 
+    // Broadened target tracking matrix criteria to catch both variations safely
     const { data } = await supabase
       .from('issue_vouchers')
       .select('total_value, issued_date, department:departments(name)')
-      .eq('status', 'issued')
+      .in('status', ['issued', 'ISSUED', 'approved', 'APPROVED'])
       .gte('issued_date', fromDate)
       .lte('issued_date', toDate)
 
     const deptMap: Record<string, number> = {}
     ;(data ?? []).forEach((v: any) => {
-      // Handles standard object mappings and arrays safely if plural joins are configured
       const deptObj = Array.isArray(v.department) ? v.department[0] : v.department
       const name = deptObj?.name ?? 'Unknown Department'
       deptMap[name] = (deptMap[name] ?? 0) + (v.total_value ?? 0)
     })
-    setDeptUsageData(Object.entries(deptMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value))
+
+    setDeptUsageData(
+      Object.entries(deptMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+    )
   }
 
   async function loadSupplierPerf() {
@@ -138,7 +156,7 @@ export default function ReportsPage() {
       const name = suppObj?.name ?? 'Unknown'
       if (!suppMap[name]) suppMap[name] = { total: 0, count: 0, approved: 0 }
       suppMap[name].count++
-      if (g.status === 'approved') {
+      if (['approved', 'APPROVED'].includes(g.status)) {
         suppMap[name].total += g.total_value ?? 0
         suppMap[name].approved++
       }
@@ -231,11 +249,10 @@ export default function ReportsPage() {
         <>
           {activeTab === 'stock_valuation' && (
             <div className="space-y-6">
-              {/* Summary cards */}
               <div className="grid grid-cols-3 gap-4">
                 <div className="stat-card">
                   <div className="text-xs text-gray-500 mb-1 font-display uppercase tracking-wide">Total Stock Value</div>
-                  <div className="font-display font-700 text-2xl text-gray-990">{formatCurrency(valuationSummary.total)}</div>
+                  <div className="font-display font-700 text-2xl text-gray-900">{formatCurrency(valuationSummary.total)}</div>
                 </div>
                 <div className="stat-card">
                   <div className="text-xs text-gray-500 mb-1 font-display uppercase tracking-wide">Active Items</div>
@@ -247,7 +264,6 @@ export default function ReportsPage() {
                 </div>
               </div>
 
-              {/* Top 10 by value chart */}
               <div className="card p-5">
                 <h3 className="font-display font-700 text-gray-900 mb-4">Top 10 Items by Value</h3>
                 <ResponsiveContainer width="100%" height={260}>
@@ -261,7 +277,6 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
               </div>
 
-              {/* Full table */}
               <div className="card overflow-hidden">
                 <div className="p-4 border-b border-gray-50">
                   <h3 className="font-display font-700 text-gray-900">Full Stock Valuation Report</h3>
@@ -389,27 +404,35 @@ export default function ReportsPage() {
               <div className="grid lg:grid-cols-2 gap-5">
                 <div className="card p-5">
                   <h3 className="font-display font-700 text-gray-900 mb-4">Issues by Department (Value)</h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={deptUsageData} margin={{ left: -10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} />
-                      <Tooltip formatter={(v) => formatCurrency(Number(v))} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                      <Bar dataKey="value" name="Value Issued (GHS)" fill="#c8963e" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {deptUsageData.length === 0 ? (
+                    <div className="flex items-center justify-center h-[260px] text-gray-400 text-sm">No asset output charts mapped for this timeframe</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={deptUsageData} margin={{ left: -10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} />
+                        <Tooltip formatter={(v) => formatCurrency(Number(v))} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+                        <Bar dataKey="value" name="Value Issued (GHS)" fill="#c8963e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
                 <div className="card p-5">
                   <h3 className="font-display font-700 text-gray-900 mb-4">Department Share</h3>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <PieChart>
-                      <Pie data={deptUsageData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} paddingAngle={3}>
-                        {deptUsageData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                      </Pie>
-                      <Tooltip formatter={(v) => formatCurrency(Number(v))} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                      <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  {deptUsageData.length === 0 ? (
+                    <div className="flex items-center justify-center h-[260px] text-gray-400 text-sm">No relational distribution data found</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <PieChart>
+                        <Pie data={deptUsageData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} paddingAngle={3}>
+                          {deptUsageData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v) => formatCurrency(Number(v))} contentStyle={{ borderRadius: 8, fontSize: 12 }} />
+                        <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
               <div className="card overflow-hidden">
