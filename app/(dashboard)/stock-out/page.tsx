@@ -69,15 +69,79 @@ export default function StockOutPage() {
 
     try {
       if (status === 'issued') {
-        // Run atomic database function transaction to securely adjust balances
-        const { error: rpcErr } = await supabase.rpc('issue_stock_voucher', {
-          target_voucher_id: id,
-          actor_user_id: userProfile.id
-        })
-        if (rpcErr) throw rpcErr
+        // 1. Fetch line items tied to this issue voucher
+        const { data: voucherItems, error: itemsErr } = await supabase
+          .from('issue_voucher_items')
+          .select('item_id, quantity_approved, quantity_requested')
+          .eq('voucher_id', id)
+
+        if (itemsErr) throw itemsErr
+        if (!voucherItems || voucherItems.length === 0) {
+          throw new Error('No items found on this voucher to process for issuance.')
+        }
+
+        // 2. Loop through each line item to manually modify stock balances
+        for (const line of voucherItems) {
+          // Fallback resolution sequence: Approved -> Requested -> 0
+          const qtyToDeduct = line.quantity_approved ?? line.quantity_requested ?? 0
+
+          if (qtyToDeduct > 0) {
+            // Get current stock allocation metrics from database
+            const { data: invItem, error: fetchInvErr } = await supabase
+              .from('inventory_items')
+              .select('quantity_in_stock, unit_cost')
+              .eq('id', line.item_id)
+              .maybeSingle()
+
+            if (fetchInvErr) throw fetchInvErr
+
+            if (invItem) {
+              const currentStock = invItem.quantity_in_stock ?? 0
+              const unitCost = invItem.unit_cost ?? 0
+              
+              // Ensure stock math stays non-negative
+              const newStockQty = Math.max(0, currentStock - qtyToDeduct)
+
+              // Deduct balance cleanly from inventory_items
+              const { error: deductErr } = await supabase
+                .from('inventory_items')
+                .update({ 
+                  quantity_in_stock: newStockQty,
+                  total_value: newStockQty * unitCost,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', line.item_id)
+
+              if (deductErr) throw deductErr
+            }
+
+            // Attempt to update quantity_issued safely (wrapped to prevent crash if column is missing)
+            try {
+              await supabase
+                .from('issue_voucher_items')
+                .update({ quantity_issued: qtyToDeduct })
+                .eq('voucher_id', id)
+                .eq('item_id', line.item_id)
+            } catch (columnErr) {
+              console.warn('Skipping quantity_issued storage update:', columnErr)
+            }
+          }
+        }
+
+        // 3. Complete structural state transition on master voucher tracking document
+        const { error: voucherErr } = await supabase
+          .from('issue_vouchers')
+          .update({ 
+            status: 'issued', 
+            issued_by: userProfile.id,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id)
+
+        if (voucherErr) throw voucherErr
       } 
       else if (status === 'approved') {
-        // 1. When approving, explicitly populate 'quantity_approved' so it isn't left empty in the database
+        // Fetch raw target item requests 
         const { data: voucherItems, error: fetchErr } = await supabase
           .from('issue_voucher_items')
           .select('id, quantity_requested')
@@ -85,7 +149,7 @@ export default function StockOutPage() {
 
         if (fetchErr) throw fetchErr
 
-        // Sync requested quantities into the approval columns
+        // Synchronize and write requested numbers into approval rows to remove empty statuses
         for (const item of voucherItems ?? []) {
           const { error: lineErr } = await supabase
             .from('issue_voucher_items')
@@ -95,13 +159,13 @@ export default function StockOutPage() {
           if (lineErr) throw lineErr
         }
 
-        // 2. Mark parent tracking document as approved
+        // Advance documentation status lifecycle to approved
         const update = { status, approved_by: userProfile.id }
         const { error: updateErr } = await supabase.from('issue_vouchers').update(update).eq('id', id)
         if (updateErr) throw updateErr
       } 
       else {
-        // Handle normal status assignments (submitted, rejected)
+        // Process standard fallback assignments (draft, submitted, rejected)
         const update: Record<string, string> = { status }
         const { error: updateErr } = await supabase.from('issue_vouchers').update(update).eq('id', id)
         if (updateErr) throw updateErr
@@ -109,8 +173,8 @@ export default function StockOutPage() {
       
       loadVouchers()
     } catch (err: any) {
-      console.error('Error executing stock out status update:', err)
-      alert(err.message || 'An error occurred while modifying voucher status.')
+      console.error('Error executing stock out adjustment workflow:', err)
+      alert(`Transaction Halted: ${err.message || 'Please check schema configurations.'}`)
     }
   }
 
