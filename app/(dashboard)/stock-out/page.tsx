@@ -43,7 +43,14 @@ export default function StockOutPage() {
     setLoading(true)
     let q = supabase
       .from('issue_vouchers')
-      .select('*, department:departments(id,name), requested_by_profile:profiles!issue_vouchers_requested_by_fkey(id,full_name)', { count: 'exact' })
+      .select(`
+        *, 
+        department:departments(id,name), 
+        requested_by_profile:profiles!issue_vouchers_requested_by_fkey(id,full_name),
+        items:issue_voucher_items(
+          item:inventory_items(name)
+        )
+      `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
 
@@ -121,6 +128,7 @@ export default function StockOutPage() {
                 <th>Department</th>
                 <th>Requested By</th>
                 <th>Request Date</th>
+                <th>Items Requested</th>
                 <th>Purpose</th>
                 <th className="text-right">Total Value</th>
                 <th>Status</th>
@@ -129,37 +137,47 @@ export default function StockOutPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="text-center py-12 text-gray-400"><RefreshCw size={18} className="inline animate-spin mr-2" />Loading…</td></tr>
+                <tr><td colSpan={9} className="text-center py-12 text-gray-400"><RefreshCw size={18} className="inline animate-spin mr-2" />Loading…</td></tr>
               ) : vouchers.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-12 text-gray-400"><ArrowUpFromLine size={32} className="mx-auto mb-2 opacity-30" />No vouchers found</td></tr>
-              ) : vouchers.map(v => (
-                <tr key={v.id}>
-                  <td><span className="font-mono text-sm font-700 text-amber-700">{v.voucher_number}</span></td>
-                  <td className="font-600 text-gray-800">{(v as any).department?.name ?? '—'}</td>
-                  <td className="text-gray-600 text-sm">{(v as any).requested_by_profile?.full_name ?? '—'}</td>
-                  <td className="text-gray-600">{formatDate(v.request_date)}</td>
-                  <td className="text-gray-500 text-sm max-w-[160px] truncate">{v.purpose ?? '—'}</td>
-                  <td className="text-right font-700 text-gray-800">{formatCurrency(v.total_value)}</td>
-                  <td><StatusBadge status={v.status} /></td>
-                  <td>
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => setViewVoucher(v)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View"><Eye size={14} /></button>
-                      {v.status === 'draft' && (
-                        <button onClick={() => updateStatus(v.id, 'submitted')} className="px-2 py-1 rounded text-xs text-white bg-blue-500 hover:bg-blue-600 transition-colors">Submit</button>
-                      )}
-                      {v.status === 'submitted' && canApprove && (
-                        <>
-                          <button onClick={() => updateStatus(v.id, 'approved')} className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve"><CheckCircle size={14} /></button>
-                          <button onClick={() => updateStatus(v.id, 'rejected')} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Reject"><XCircle size={14} /></button>
-                        </>
-                      )}
-                      {v.status === 'approved' && canIssue && (
-                        <button onClick={() => updateStatus(v.id, 'issued')} className="px-2 py-1 rounded text-xs text-white bg-purple-600 hover:bg-purple-700 transition-colors flex items-center gap-1"><Send size={11} /> Issue</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                <tr><td colSpan={9} className="text-center py-12 text-gray-400"><ArrowUpFromLine size={32} className="mx-auto mb-2 opacity-30" />No vouchers found</td></tr>
+              ) : vouchers.map(v => {
+                const itemsList = (v as any).items
+                  ?.map((line: any) => line.item?.name)
+                  .filter(Boolean)
+                  .join(', ')
+
+                return (
+                  <tr key={v.id}>
+                    <td><span className="font-mono text-sm font-700 text-amber-700">{v.voucher_number}</span></td>
+                    <td className="font-600 text-gray-800">{(v as any).department?.name ?? '—'}</td>
+                    <td className="text-gray-600 text-sm">{(v as any).requested_by_profile?.full_name ?? '—'}</td>
+                    <td className="text-gray-600">{formatDate(v.request_date)}</td>
+                    <td className="text-gray-700 text-sm max-w-[200px] truncate font-500" title={itemsList}>
+                      {itemsList || '—'}
+                    </td>
+                    <td className="text-gray-500 text-sm max-w-[160px] truncate">{v.purpose ?? '—'}</td>
+                    <td className="text-right font-700 text-gray-800">{formatCurrency(v.total_value)}</td>
+                    <td><StatusBadge status={v.status} /></td>
+                    <td>
+                      <div className="flex justify-end gap-1">
+                        <button onClick={() => setViewVoucher(v)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View"><Eye size={14} /></button>
+                        {v.status === 'draft' && (
+                          <button onClick={() => updateStatus(v.id, 'submitted')} className="px-2 py-1 rounded text-xs text-white bg-blue-500 hover:bg-blue-600 transition-colors">Submit</button>
+                        )}
+                        {v.status === 'submitted' && canApprove && (
+                          <>
+                            <button onClick={() => updateStatus(v.id, 'approved')} className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve"><CheckCircle size={14} /></button>
+                            <button onClick={() => updateStatus(v.id, 'rejected')} className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="Reject"><XCircle size={14} /></button>
+                          </>
+                        )}
+                        {v.status === 'approved' && canIssue && (
+                          <button onClick={() => updateStatus(v.id, 'issued')} className="px-2 py-1 rounded text-xs text-white bg-purple-600 hover:bg-purple-700 transition-colors flex items-center gap-1"><Send size={11} /> Issue</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -396,7 +414,7 @@ function VoucherViewModal({ voucher, onClose }: { voucher: any; onClose: () => v
                   <td colSpan={5} className="text-right font-700 text-gray-700 py-3 px-4">Grand Total:</td>
                   <td className="text-right font-700 text-gray-900 py-3 px-4">{formatCurrency(full.total_value)}</td>
                 </tr>
-              </tfoot>
+              </tbody>
             </table>
           </div>
         )}
