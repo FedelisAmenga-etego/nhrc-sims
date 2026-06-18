@@ -69,25 +69,48 @@ export default function StockOutPage() {
 
     try {
       if (status === 'issued') {
-        // Run database transaction to safely adjust balances in inventory items table
+        // Run atomic database function transaction to securely adjust balances
         const { error: rpcErr } = await supabase.rpc('issue_stock_voucher', {
           target_voucher_id: id,
           actor_user_id: userProfile.id
         })
         if (rpcErr) throw rpcErr
-      } else {
-        // Handle normal text status assignments (submitted, approved, rejected)
-        const update: Record<string, string> = { status }
-        if (status === 'approved') update.approved_by = userProfile.id
+      } 
+      else if (status === 'approved') {
+        // 1. When approving, explicitly populate 'quantity_approved' so it isn't left empty in the database
+        const { data: voucherItems, error: fetchErr } = await supabase
+          .from('issue_voucher_items')
+          .select('id, quantity_requested')
+          .eq('voucher_id', id)
 
+        if (fetchErr) throw fetchErr
+
+        // Sync requested quantities into the approval columns
+        for (const item of voucherItems ?? []) {
+          const { error: lineErr } = await supabase
+            .from('issue_voucher_items')
+            .update({ quantity_approved: item.quantity_requested })
+            .eq('id', item.id)
+          
+          if (lineErr) throw lineErr
+        }
+
+        // 2. Mark parent tracking document as approved
+        const update = { status, approved_by: userProfile.id }
+        const { error: updateErr } = await supabase.from('issue_vouchers').update(update).eq('id', id)
+        if (updateErr) throw updateErr
+      } 
+      else {
+        // Handle normal status assignments (submitted, rejected)
+        const update: Record<string, string> = { status }
         const { error: updateErr } = await supabase.from('issue_vouchers').update(update).eq('id', id)
         if (updateErr) throw updateErr
       }
       
       loadVouchers()
     } catch (err: any) {
-      console.error('Error executing stock out adjustment:', err)
-      alert(err.message || 'An error occurred while updating status.')
+      console.error('Error executing stock out status update:', err)
+      alert(err.message || 'An error occurred while modifying voucher status.')
     }
   }
 
