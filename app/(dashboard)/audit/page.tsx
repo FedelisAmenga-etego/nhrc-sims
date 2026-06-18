@@ -108,11 +108,13 @@ export default function AuditPage() {
                   </td>
                   <td>
                     <span className={`badge ${ACTION_COLORS[log.action] ?? 'bg-gray-100 text-gray-600 border-gray-200'}`}>
-                      {log.action.replace(/_/g, ' ')}
+                      {log.action?.replace(/_/g, ' ')}
                     </span>
                   </td>
                   <td><code className="text-xs bg-gray-50 px-2 py-0.5 rounded font-mono text-gray-600">{log.table_name}</code></td>
-                  <td className="text-xs text-gray-400 font-mono">{log.record_id ? log.record_id.slice(0, 12) + '…' : '—'}</td>
+                  <td className="text-xs text-gray-400 font-mono" title={log.record_id}>
+                    {log.record_id ? log.record_id.slice(0, 12) + '…' : '—'}
+                  </td>
                   <td>
                     {(log.old_values || log.new_values) && (
                       <div className="flex justify-end">
@@ -138,38 +140,41 @@ export default function AuditPage() {
 
       {/* Detail modal */}
       {selectedLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-          <div className="card w-full max-w-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in-50">
+          <div className="card w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-white rounded-t-xl">
               <div>
                 <h2 className="font-display font-700 text-lg text-gray-900">Audit Log Details</h2>
                 <p className="text-xs text-gray-400 mt-0.5">{formatDateTime(selectedLog.created_at)}</p>
               </div>
               <button onClick={() => setSelectedLog(null)} className="p-2 rounded-lg text-gray-400 hover:bg-gray-100">✕</button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1 bg-gray-50/50">
+              <div className="grid grid-cols-2 gap-3 text-sm bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
                 <div><span className="text-gray-500">User:</span> <span className="font-600 ml-1">{selectedLog.user?.full_name ?? 'System'}</span></div>
                 <div><span className="text-gray-500">Action:</span> <span className="font-600 ml-1">{selectedLog.action}</span></div>
                 <div><span className="text-gray-500">Table:</span> <code className="ml-1 text-xs bg-gray-50 px-2 py-0.5 rounded font-mono">{selectedLog.table_name}</code></div>
-                <div><span className="text-gray-500">Record:</span> <code className="ml-1 text-xs bg-gray-50 px-2 py-0.5 rounded font-mono">{selectedLog.record_id}</code></div>
+                <div><span className="text-gray-500">Record ID:</span> <code className="ml-1 text-xs bg-gray-50 px-2 py-0.5 rounded font-mono text-gray-700">{selectedLog.record_id}</code></div>
               </div>
-              {selectedLog.old_values && (
+              {selectedLog.old_values && Object.keys(selectedLog.old_values).length > 0 && (
                 <div>
-                  <div className="text-xs font-700 text-gray-500 uppercase tracking-wide mb-2">Previous Values</div>
-                  <pre className="bg-red-50 border border-red-100 rounded-lg p-3 text-xs overflow-x-auto text-gray-700">
+                  <div className="text-xs font-700 text-gray-500 uppercase tracking-wide mb-2">Previous Values (Before Change)</div>
+                  <pre className="bg-red-50/60 border border-red-100 rounded-lg p-3 text-xs overflow-x-auto text-gray-800 font-mono">
                     {JSON.stringify(selectedLog.old_values, null, 2)}
                   </pre>
                 </div>
               )}
-              {selectedLog.new_values && (
+              {selectedLog.new_values && Object.keys(selectedLog.new_values).length > 0 && (
                 <div>
-                  <div className="text-xs font-700 text-gray-500 uppercase tracking-wide mb-2">New Values</div>
-                  <pre className="bg-green-50 border border-green-100 rounded-lg p-3 text-xs overflow-x-auto text-gray-700">
+                  <div className="text-xs font-700 text-gray-500 uppercase tracking-wide mb-2">New Values (After Change)</div>
+                  <pre className="bg-green-50/60 border border-green-100 rounded-lg p-3 text-xs overflow-x-auto text-gray-800 font-mono">
                     {JSON.stringify(selectedLog.new_values, null, 2)}
                   </pre>
                 </div>
               )}
+            </div>
+            <div className="p-4 bg-white border-t border-gray-100 flex justify-end rounded-b-xl">
+              <button type="button" onClick={() => setSelectedLog(null)} className="btn-secondary text-xs px-4">Close Info</button>
             </div>
           </div>
         </div>
