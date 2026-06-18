@@ -6,10 +6,10 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { formatCurrency, formatDate, exportToCSV, generateExportFilename } from '@/lib/utils'
 import {
-  Plus, Search, Download, Eye, Edit2, CheckCircle, XCircle,
+  Plus, Search, Download, Eye, CheckCircle, XCircle,
   X, Trash2, ChevronLeft, ChevronRight, RefreshCw, ArrowDownToLine
 } from 'lucide-react'
-import type { GoodsReceivedNote, Supplier, InventoryItem, Unit, Profile } from '@/types'
+import type { GoodsReceivedNote, Supplier, InventoryItem, Profile } from '@/types'
 
 const PAGE_SIZE = 15
 
@@ -53,10 +53,18 @@ export default function StockInPage() {
     setLoading(false)
   }
 
+  // Uses RPC function to update status and safely commit stock adjustments natively
   async function updateStatus(id: string, status: string, userId: string) {
-    const update: Record<string, string> = { status }
-    if (status === 'approved') update.approved_by = userId
-    await supabase.from('goods_received_notes').update(update).eq('id', id)
+    if (status === 'approved') {
+      const { error } = await supabase.rpc('approve_grn', { target_grn_id: id, approver_id: userId })
+      if (error) {
+        alert(`Failed to approve stock entry: ${error.message}`)
+        return
+      }
+    } else {
+      const update: Record<string, string> = { status }
+      await supabase.from('goods_received_notes').update(update).eq('id', id)
+    }
     loadGRNs()
   }
 
@@ -86,7 +94,6 @@ export default function StockInPage() {
         </div>
       </div>
 
-      {/* Filters */}
       <div className="card p-4 mb-5 flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -129,7 +136,7 @@ export default function StockInPage() {
                 </td></tr>
               ) : grns.map(grn => (
                 <tr key={grn.id}>
-                  <td><span className="font-mono text-sm font-700 text-blue-700">{grn.grn_number}</span></td>
+                  <td><span className="font-mono text-sm font-700 text-blue-700">{grn.grn_number || 'DRAFT'}</span></td>
                   <td className="font-600 text-gray-800">{(grn as any).supplier?.name ?? '—'}</td>
                   <td className="text-gray-600">{formatDate(grn.received_date)}</td>
                   <td className="text-gray-500 text-sm">{grn.invoice_number ?? '—'}</td>
@@ -146,7 +153,7 @@ export default function StockInPage() {
                       {grn.status === 'submitted' && canApprove && (
                         <>
                           <button onClick={() => updateStatus(grn.id, 'approved', userProfile!.id)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve">
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors" title="Approve & Commit Stock">
                             <CheckCircle size={14} />
                           </button>
                           <button onClick={() => updateStatus(grn.id, 'rejected', userProfile!.id)}
@@ -157,7 +164,7 @@ export default function StockInPage() {
                       )}
                       {grn.status === 'draft' && (
                         <button onClick={() => updateStatus(grn.id, 'submitted', userProfile?.id ?? '')}
-                          className="p-1.5 rounded-lg text-xs text-white bg-blue-500 hover:bg-blue-600 px-2 transition-colors" title="Submit">
+                          className="p-1.5 rounded-lg text-xs font-600 text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded shadow-sm transition-colors" title="Submit for Approval">
                           Submit
                         </button>
                       )}
@@ -200,9 +207,8 @@ function StatusBadge({ status }: { status: string }) {
     submitted: 'bg-blue-50 text-blue-700 border-blue-200',
     approved: 'bg-green-50 text-green-700 border-green-200',
     rejected: 'bg-red-50 text-red-700 border-red-200',
-    issued: 'bg-purple-50 text-purple-700 border-purple-200',
   }
-  return <span className={`badge ${styles[status] ?? 'bg-gray-100 text-gray-600'}`}>{status}</span>
+  return <span className={`badge capitalize ${styles[status] ?? 'bg-gray-100 text-gray-600'}`}>{status}</span>
 }
 
 function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | null; onClose: () => void; onSave: () => void }) {
@@ -239,20 +245,20 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
     setLineItems(l => l.filter((_, idx) => idx !== i))
   }
 
+  // Refactored to fetch pricing defaults intelligently on selection changes
   function updateLine(i: number, k: string, v: string) {
     setLineItems(l => l.map((line, idx) => {
       if (idx !== i) return line
       const updated = { ...line, [k]: v }
-      // Auto-fill unit cost when item selected
       if (k === 'item_id') {
         const item = inventoryItems.find(it => it.id === v)
-        if (item) updated.unit_cost = String(item.unit_cost)
+        if (item) updated.unit_cost = String(item.unit_cost ?? 0)
       }
       return updated
     }))
   }
 
-  const totalValue = lineItems.reduce((s, l) => s + (Number(l.quantity_received) * Number(l.unit_cost)), 0)
+  const totalValue = lineItems.reduce((s, l) => s + (Number(l.quantity_received || 0) * Number(l.unit_cost || 0)), 0)
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -260,10 +266,13 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
     setSaving(true)
     setError('')
     try {
+      // Temporary sequential tracking reference string generation logic
+      const trackingRef = `GRN-TMP-${Math.floor(100000 + Math.random() * 900000)}`
+
       const { data: grn, error: grnErr } = await supabase.from('goods_received_notes').insert({
         ...form,
         received_by: userProfile.id,
-        grn_number: '',
+        grn_number: trackingRef,
         total_value: totalValue,
         status: 'draft',
       }).select().single()
@@ -292,91 +301,102 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="card w-full max-w-4xl max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
-          <h2 className="font-display font-700 text-xl text-gray-900">New Goods Received Note</h2>
-          <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="card w-full max-w-5xl flex flex-col max-h-[90vh] shadow-xl animate-in zoom-in-95">
+        
+        {/* Sticky Form Header Container */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-white rounded-t-xl flex-shrink-0">
+          <div>
+            <h2 className="font-display font-700 text-lg text-gray-900">New Goods Received Note</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Logs temporary batches to draft states until committed by an administrator.</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+            <X size={18} />
+          </button>
         </div>
-        <form onSubmit={handleSave} className="p-6 space-y-5">
-          {/* Header fields */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 md:col-span-1">
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Supplier *</label>
-              <select value={form.supplier_id} onChange={e => setForm(f => ({ ...f, supplier_id: e.target.value }))} className="form-input" required>
+
+        {/* Scrollable Document Field Area */}
+        <form onSubmit={handleSave} className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/50 max-h-[68vh]">
+          
+          {/* Metadata Section */}
+          <div className="p-4 bg-white rounded-xl border border-gray-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-600 text-gray-700 mb-1">Supplier *</label>
+              <select value={form.supplier_id} onChange={e => setForm(f => ({ ...f, supplier_id: e.target.value }))} className="form-input w-full text-sm" required>
                 <option value="">— Select Supplier —</option>
                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Date Received *</label>
-              <input type="date" value={form.received_date} onChange={e => setForm(f => ({ ...f, received_date: e.target.value }))} className="form-input" required />
+              <label className="block text-xs font-600 text-gray-700 mb-1">Date Received *</label>
+              <input type="date" value={form.received_date} onChange={e => setForm(f => ({ ...f, received_date: e.target.value }))} className="form-input w-full text-sm" required />
             </div>
             <div>
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Invoice Number</label>
-              <input value={form.invoice_number} onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))} className="form-input" placeholder="INV-XXXX" />
+              <label className="block text-xs font-600 text-gray-700 mb-1">Invoice Number</label>
+              <input value={form.invoice_number} onChange={e => setForm(f => ({ ...f, invoice_number: e.target.value }))} className="form-input w-full text-sm" placeholder="INV-XXXX" />
             </div>
             <div>
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Delivery Note No.</label>
-              <input value={form.delivery_note_number} onChange={e => setForm(f => ({ ...f, delivery_note_number: e.target.value }))} className="form-input" />
+              <label className="block text-xs font-600 text-gray-700 mb-1">Delivery Note No.</label>
+              <input value={form.delivery_note_number} onChange={e => setForm(f => ({ ...f, delivery_note_number: e.target.value }))} className="form-input w-full text-sm" />
             </div>
             <div>
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Purchase Order No.</label>
-              <input value={form.purchase_order_number} onChange={e => setForm(f => ({ ...f, purchase_order_number: e.target.value }))} className="form-input" />
+              <label className="block text-xs font-600 text-gray-700 mb-1">Purchase Order No.</label>
+              <input value={form.purchase_order_number} onChange={e => setForm(f => ({ ...f, purchase_order_number: e.target.value }))} className="form-input w-full text-sm" />
             </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-600 text-gray-700 mb-1.5">Notes</label>
-              <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="form-input" rows={2} />
+            <div className="md:col-span-3">
+              <label className="block text-xs font-600 text-gray-700 mb-1">Internal Notes / Observations</label>
+              <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="form-input w-full text-sm" rows={2} />
             </div>
           </div>
 
-          {/* Line items */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-display font-700 text-gray-900">Items Received</h3>
-              <button type="button" onClick={addLine} className="btn-secondary text-sm py-1.5"><Plus size={14} /> Add Line</button>
+          {/* Lines Table Layout wrapper */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-700 text-blue-600 uppercase tracking-wider">Items Received Entry Matrix</h3>
+              <button type="button" onClick={addLine} className="btn-secondary text-xs py-1.5 px-3"><Plus size={13} /> Add New Row</button>
             </div>
-            <div className="border border-gray-100 rounded-xl overflow-hidden">
-              <table className="data-table">
+            
+            <div className="overflow-x-auto border border-gray-100 rounded-xl">
+              <table className="data-table min-w-[900px]">
                 <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th className="text-right">Qty Ordered</th>
-                    <th className="text-right">Qty Received *</th>
-                    <th className="text-right">Unit Cost *</th>
-                    <th className="text-right">Total</th>
-                    <th>Batch No.</th>
-                    <th>Expiry Date</th>
-                    <th></th>
+                  <tr className="bg-gray-50/70 text-xs">
+                    <th className="w-1/3">Item Catalog Description</th>
+                    <th className="text-right w-24">Qty Ordered</th>
+                    <th className="text-right w-24">Qty Received *</th>
+                    <th className="text-right w-28">Unit Cost *</th>
+                    <th className="text-right w-28">Subtotal</th>
+                    <th className="w-28">Batch No.</th>
+                    <th className="w-36">Expiry Date</th>
+                    <th className="w-8"></th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                   {lineItems.map((line, i) => (
-                    <tr key={i}>
-                      <td>
-                        <select value={line.item_id} onChange={e => updateLine(i, 'item_id', e.target.value)} className="form-input text-sm py-1.5 min-w-[200px]" required>
-                          <option value="">— Select Item —</option>
-                          {inventoryItems.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
+                    <tr key={i} className="hover:bg-gray-50/40">
+                      <td className="p-2">
+                        <select value={line.item_id} onChange={e => updateLine(i, 'item_id', e.target.value)} className="form-input text-xs w-full py-1" required>
+                          <option value="">— Select Catalog Item —</option>
+                          {inventoryItems.map(it => <option key={it.id} value={it.id}>{it.name} {(it as any).unit?.abbreviation ? `(${(it as any).unit.abbreviation})` : ''}</option>)}
                         </select>
                       </td>
-                      <td><input type="number" min="0" step="0.01" value={line.quantity_ordered} onChange={e => updateLine(i, 'quantity_ordered', e.target.value)} className="form-input text-sm py-1.5 w-24 text-right" /></td>
-                      <td><input type="number" min="0" step="0.01" value={line.quantity_received} onChange={e => updateLine(i, 'quantity_received', e.target.value)} className="form-input text-sm py-1.5 w-24 text-right" required /></td>
-                      <td><input type="number" min="0" step="0.01" value={line.unit_cost} onChange={e => updateLine(i, 'unit_cost', e.target.value)} className="form-input text-sm py-1.5 w-28 text-right" required /></td>
-                      <td className="text-right font-700 text-sm">{formatCurrency(Number(line.quantity_received) * Number(line.unit_cost))}</td>
-                      <td><input value={line.batch_number} onChange={e => updateLine(i, 'batch_number', e.target.value)} className="form-input text-sm py-1.5 w-28" placeholder="Batch" /></td>
-                      <td><input type="date" value={line.expiry_date} onChange={e => updateLine(i, 'expiry_date', e.target.value)} className="form-input text-sm py-1.5 w-36" /></td>
-                      <td>
+                      <td className="p-2"><input type="number" min="0" step="0.01" value={line.quantity_ordered} onChange={e => updateLine(i, 'quantity_ordered', e.target.value)} className="form-input text-xs py-1 text-right w-full" /></td>
+                      <td className="p-2"><input type="number" min="0" step="0.01" value={line.quantity_received} onChange={e => updateLine(i, 'quantity_received', e.target.value)} className="form-input text-xs py-1 text-right w-full" required /></td>
+                      <td className="p-2"><input type="number" min="0" step="0.01" value={line.unit_cost} onChange={e => updateLine(i, 'unit_cost', e.target.value)} className="form-input text-xs py-1 text-right w-full" required /></td>
+                      <td className="p-2 text-right font-700 text-xs text-gray-900">{formatCurrency(Number(line.quantity_received || 0) * Number(line.unit_cost || 0))}</td>
+                      <td className="p-2"><input value={line.batch_number} onChange={e => updateLine(i, 'batch_number', e.target.value)} className="form-input text-xs py-1 w-full" placeholder="Batch ref" /></td>
+                      <td className="p-2"><input type="date" value={line.expiry_date} onChange={e => updateLine(i, 'expiry_date', e.target.value)} className="form-input text-xs py-1 w-full" /></td>
+                      <td className="p-2 text-center">
                         {lineItems.length > 1 && (
-                          <button type="button" onClick={() => removeLine(i)} className="p-1 text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                          <button type="button" onClick={() => removeLine(i)} className="text-gray-400 hover:text-red-500 transition-colors p-1"><Trash2 size={14} /></button>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr>
-                    <td colSpan={4} className="text-right font-700 text-gray-700 py-3 px-4">Total Value:</td>
-                    <td className="text-right font-700 text-gray-900 py-3 px-4">{formatCurrency(totalValue)}</td>
+                  <tr className="bg-gray-50/50 font-700 text-sm border-t border-gray-100">
+                    <td colSpan={4} className="text-right py-3 px-4 text-gray-600">Total Valuation Summary:</td>
+                    <td className="text-right py-3 px-4 text-blue-700 font-display">{formatCurrency(totalValue)}</td>
                     <td colSpan={3}></td>
                   </tr>
                 </tfoot>
@@ -385,11 +405,16 @@ function GRNModal({ userProfile, onClose, onSave }: { userProfile: Profile | nul
           </div>
 
           {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">{error}</div>}
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Saving…' : 'Save GRN'}</button>
-          </div>
         </form>
+
+        {/* Sticky Confirmation Footer */}
+        <div className="flex justify-end gap-3 p-4 border-t border-gray-100 bg-white rounded-b-xl flex-shrink-0">
+          <button type="button" onClick={onClose} className="btn-secondary px-5">Cancel</button>
+          <button type="submit" onClick={handleSave} disabled={saving} className="btn-primary px-5 shadow-sm">
+            {saving ? 'Saving batch…' : 'Save Draft Document'}
+          </button>
+        </div>
+
       </div>
     </div>
   )
@@ -407,60 +432,77 @@ function GRNViewModal({ grn, onClose }: { grn: GoodsReceivedNote; onClose: () =>
   }, [grn.id])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="card w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="font-display font-700 text-xl text-gray-900">{grn.grn_number}</h2>
-          <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
-        </div>
-        {!fullGRN ? (
-          <div className="p-12 text-center text-gray-400"><RefreshCw size={20} className="inline animate-spin" /></div>
-        ) : (
-          <div className="p-6 space-y-5">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div><span className="text-gray-500">Supplier:</span> <span className="font-600 ml-1">{fullGRN.supplier?.name}</span></div>
-              <div><span className="text-gray-500">Date:</span> <span className="font-600 ml-1">{formatDate(fullGRN.received_date)}</span></div>
-              <div><span className="text-gray-500">Invoice No:</span> <span className="ml-1">{fullGRN.invoice_number ?? '—'}</span></div>
-              <div><span className="text-gray-500">PO No:</span> <span className="ml-1">{fullGRN.purchase_order_number ?? '—'}</span></div>
-              <div><span className="text-gray-500">Received By:</span> <span className="ml-1">{fullGRN.received_by_profile?.full_name}</span></div>
-              <div><span className="text-gray-500">Status:</span> <StatusBadge status={fullGRN.status} /></div>
-            </div>
-            <table className="data-table border border-gray-100 rounded-xl overflow-hidden">
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Code</th>
-                  <th className="text-right">Qty Received</th>
-                  <th className="text-right">Unit Cost</th>
-                  <th className="text-right">Total</th>
-                  <th>Batch</th>
-                  <th>Expiry</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fullGRN.items?.map((item: any) => (
-                  <tr key={item.id}>
-                    <td className="font-600">{item.item?.name}</td>
-                    <td className="font-mono text-xs text-gray-500">{item.item?.item_code}</td>
-                    <td className="text-right">{item.quantity_received} {item.item?.unit?.abbreviation}</td>
-                    <td className="text-right">{formatCurrency(item.unit_cost)}</td>
-                    <td className="text-right font-700">{formatCurrency(item.total_cost)}</td>
-                    <td className="text-sm text-gray-500">{item.batch_number ?? '—'}</td>
-                    <td className="text-sm text-gray-500">{item.expiry_date ? formatDate(item.expiry_date) : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={4} className="text-right font-700 text-gray-700 py-3 px-4">Grand Total:</td>
-                  <td className="text-right font-700 text-gray-900 py-3 px-4">{formatCurrency(fullGRN.total_value)}</td>
-                  <td colSpan={2}></td>
-                </tr>
-              </tfoot>
-            </table>
-            {fullGRN.notes && <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">{fullGRN.notes}</p>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="card w-full max-w-3xl flex flex-col max-h-[90vh] shadow-xl animate-in zoom-in-95">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-white rounded-t-xl flex-shrink-0">
+          <div>
+            <h2 className="font-mono font-700 text-blue-700 text-base">{grn.grn_number || 'DRAFT UNASSIGNED'}</h2>
+            <p className="text-xs text-gray-500">Inspection & audit logs</p>
           </div>
-        )}
+          <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"><X size={18} /></button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto p-6 space-y-5 max-h-[70vh]">
+          {!fullGRN ? (
+            <div className="py-12 text-center text-gray-400"><RefreshCw size={20} className="inline animate-spin" /></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs bg-gray-50 p-4 rounded-xl border border-gray-100">
+                <div><span className="text-gray-500 block mb-0.5">Supplier Profile</span> <span className="font-600 text-gray-900 text-sm">{fullGRN.supplier?.name}</span></div>
+                <div><span className="text-gray-500 block mb-0.5">Date Processed</span> <span className="font-600 text-gray-900 text-sm">{formatDate(fullGRN.received_date)}</span></div>
+                <div><span className="text-gray-500 block mb-0.5">Invoice Assignment</span> <span className="text-gray-900 font-mono">{fullGRN.invoice_number ?? '—'}</span></div>
+                <div><span className="text-gray-500 block mb-0.5">PO Link Reference</span> <span className="text-gray-900 font-mono">{fullGRN.purchase_order_number ?? '—'}</span></div>
+                <div><span className="text-gray-500 block mb-0.5">Officer in Charge</span> <span className="text-gray-900 text-sm">{fullGRN.received_by_profile?.full_name}</span></div>
+                <div><span className="text-gray-500 block mb-0.5">Verification Status</span> <StatusBadge status={fullGRN.status} /></div>
+              </div>
+              
+              <div className="border border-gray-100 rounded-xl overflow-hidden">
+                <table className="data-table">
+                  <thead className="bg-gray-50 text-xs">
+                    <tr>
+                      <th>Item</th>
+                      <th>Code</th>
+                      <th className="text-right">Qty Received</th>
+                      <th className="text-right">Unit Cost</th>
+                      <th className="text-right">Total</th>
+                      <th>Batch</th>
+                      <th>Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fullGRN.items?.map((item: any) => (
+                      <tr key={item.id} className="text-xs">
+                        <td className="font-600 text-gray-900">{item.item?.name}</td>
+                        <td className="font-mono text-gray-500">{item.item?.item_code}</td>
+                        <td className="text-right font-600 text-gray-800">{item.quantity_received} {item.item?.unit?.abbreviation}</td>
+                        <td className="text-right text-gray-600">{formatCurrency(item.unit_cost)}</td>
+                        <td className="text-right font-700 text-gray-900">{formatCurrency(item.quantity_received * item.unit_cost)}</td>
+                        <td className="text-gray-500 font-mono">{item.batch_number ?? '—'}</td>
+                        <td className="text-gray-500">{item.expiry_date ? formatDate(item.expiry_date) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-50 font-700 text-sm border-t border-gray-100">
+                      <td colSpan={4} className="text-right py-3 px-4 text-gray-700">Grand Total Valuation:</td>
+                      <td className="text-right py-3 px-4 text-blue-700">{formatCurrency(fullGRN.total_value)}</td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              {fullGRN.notes && (
+                <div className="p-3 rounded-lg bg-gray-50 text-xs text-gray-600 border border-gray-100">
+                  <strong className="block mb-1 text-gray-700">Remarks:</strong>
+                  {fullGRN.notes}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end rounded-b-xl flex-shrink-0">
+          <button type="button" onClick={onClose} className="btn-secondary text-xs px-4">Close View</button>
+        </div>
       </div>
     </div>
   )
