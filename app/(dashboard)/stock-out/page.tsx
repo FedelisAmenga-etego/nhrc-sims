@@ -64,57 +64,32 @@ export default function StockOutPage() {
     setLoading(false)
   }
 
- async function updateStatus(id: string, status: string) {
-  const update: Record<string, string> = { status }
-  if (status === 'approved' && userProfile) update.approved_by = userProfile.id
-  if (status === 'issued' && userProfile) update.issued_by = userProfile.id
+  async function updateStatus(id: string, status: string) {
+    if (!userProfile) return
 
-  if (status === 'issued') {
-    // 1. Fetch the voucher line items with approved/requested quantities
-    const { data: voucherItems, error: fetchErr } = await supabase
-      .from('issue_voucher_items')
-      .select('item_id, quantity_approved, quantity_requested, unit_cost')
-      .eq('voucher_id', id)
-
-    if (fetchErr) { console.error(fetchErr); return }
-
-    // 2. For each line item, deduct stock and update total_value
-    for (const line of voucherItems ?? []) {
-      const qtyToDeduct = line.quantity_approved ?? line.quantity_requested
-
-      // Fetch current stock
-      const { data: invItem, error: invErr } = await supabase
-        .from('inventory_items')
-        .select('quantity_in_stock, unit_cost')
-        .eq('id', line.item_id)
-        .single()
-
-      if (invErr || !invItem) continue
-
-      const newQty = Math.max(0, invItem.quantity_in_stock - qtyToDeduct)
-      const newTotalValue = newQty * invItem.unit_cost
-
-      await supabase
-        .from('inventory_items')
-        .update({
-          quantity_in_stock: newQty,
-          total_value: newTotalValue,
+    try {
+      if (status === 'issued') {
+        // Run database transaction to safely adjust balances in inventory items table
+        const { error: rpcErr } = await supabase.rpc('issue_stock_voucher', {
+          target_voucher_id: id,
+          actor_user_id: userProfile.id
         })
-        .eq('id', line.item_id)
+        if (rpcErr) throw rpcErr
+      } else {
+        // Handle normal text status assignments (submitted, approved, rejected)
+        const update: Record<string, string> = { status }
+        if (status === 'approved') update.approved_by = userProfile.id
 
-      // 3. Also stamp quantity_issued on the voucher line
-      await supabase
-        .from('issue_voucher_items')
-        .update({ quantity_issued: qtyToDeduct })
-        .eq('voucher_id', id)
-        .eq('item_id', line.item_id)
+        const { error: updateErr } = await supabase.from('issue_vouchers').update(update).eq('id', id)
+        if (updateErr) throw updateErr
+      }
+      
+      loadVouchers()
+    } catch (err: any) {
+      console.error('Error executing stock out adjustment:', err)
+      alert(err.message || 'An error occurred while updating status.')
     }
   }
-
-  // 4. Finally update the voucher status itself
-  await supabase.from('issue_vouchers').update(update).eq('id', id)
-  loadVouchers()
-}
 
   const canApprove = userProfile?.role === 'admin' || userProfile?.role === 'store_manager'
   const canIssue = userProfile?.role === 'admin' || userProfile?.role === 'store_manager' || userProfile?.role === 'store_officer'
