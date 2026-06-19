@@ -48,7 +48,7 @@ export default function StockOutPage() {
         department:departments(id,name), 
         requested_by_profile:profiles!issue_vouchers_requested_by_fkey(id,full_name),
         items:issue_voucher_items(
-          unit_cost,
+          *,
           item:inventory_items(name)
         )
       `, { count: 'exact' })
