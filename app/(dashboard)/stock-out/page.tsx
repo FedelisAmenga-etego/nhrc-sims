@@ -344,7 +344,7 @@ function VoucherModal({ userProfile, departments, onClose, onSave }: any) {
       onSave()
     } catch (err: any) {
       setError(err.message)
-    } fill_name {
+    } finally {
       setSaving(false)
     }
   }
