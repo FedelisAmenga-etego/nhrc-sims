@@ -48,6 +48,7 @@ export default function StockOutPage() {
         department:departments(id,name), 
         requested_by_profile:profiles!issue_vouchers_requested_by_fkey(id,full_name),
         items:issue_voucher_items(
+          unit_cost,
           item:inventory_items(name)
         )
       `, { count: 'exact' })
@@ -68,7 +69,6 @@ export default function StockOutPage() {
     if (!userProfile) return
     try {
       if (status === 'issued') {
-        // All stock deductions are now handled by the database function
         const { error } = await supabase.rpc(
           'approve_issue_voucher',
           {
@@ -79,7 +79,6 @@ export default function StockOutPage() {
         if (error) throw error
       }
       else if (status === 'approved') {
-        // Copy requested quantities into approved quantities
         const { data: voucherItems, error: fetchErr } = await supabase
           .from('issue_voucher_items')
           .select('id, quantity_requested')
@@ -144,13 +143,39 @@ export default function StockOutPage() {
           <p className="page-subtitle">{total} vouchers total</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => exportToCSV(vouchers.map(v => ({
-            'Voucher Number': v.voucher_number,
-            'Department': (v as any).department?.name,
-            'Date': v.request_date,
-            'Total Value': v.total_value,
-            'Status': v.status,
-          })), generateExportFilename('vouchers'))} className="btn-secondary">
+          <button 
+            onClick={() => {
+              // Flatten nested line items into direct standalone table rows for CSV
+              const exportData = vouchers.flatMap(v => {
+                const itemsList = (v as any).items ?? [];
+                
+                if (itemsList.length === 0) {
+                  return [{
+                    'Voucher Number': v.voucher_number,
+                    'Department': (v as any).department?.name ?? '—',
+                    'Date': formatDate(v.request_date),
+                    'Item Name': '—',
+                    'Unit Cost': 0,
+                    'Total Value': v.total_value,
+                    'Status': v.status,
+                  }];
+                }
+
+                return itemsList.map((line: any) => ({
+                  'Voucher Number': v.voucher_number,
+                  'Department': (v as any).department?.name ?? '—',
+                  'Date': formatDate(v.request_date),
+                  'Item Name': line.item?.name ?? '—',
+                  'Unit Cost': line.unit_cost ?? 0,
+                  'Total Value': v.total_value,
+                  'Status': v.status,
+                }));
+              });
+
+              exportToCSV(exportData, generateExportFilename('vouchers'));
+            }} 
+            className="btn-secondary"
+          >
             <Download size={15} /> Export
           </button>
           <button onClick={() => setShowModal(true)} className="btn-primary">
@@ -319,7 +344,7 @@ function VoucherModal({ userProfile, departments, onClose, onSave }: any) {
       onSave()
     } catch (err: any) {
       setError(err.message)
-    } finally {
+    } fill_name {
       setSaving(false)
     }
   }
