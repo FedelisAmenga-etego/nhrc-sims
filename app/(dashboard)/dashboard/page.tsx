@@ -8,7 +8,7 @@ import { formatCurrency, formatNumber, formatDate } from '@/lib/utils'
 import {
   Package, ArrowDownToLine, ArrowUpFromLine, AlertTriangle,
   Truck, Building2, TrendingUp, TrendingDown, BarChart2,
-  ShoppingCart, ClipboardCheck, Clock, RefreshCw
+  ShoppingCart, ClipboardCheck, Clock, RefreshCw, Users, ChevronDown
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -20,6 +20,13 @@ import { format, subMonths, startOfMonth } from 'date-fns'
 
 const PIE_COLORS = ['#1a3a6b', '#c8963e', '#0e8a6e', '#7c3aed', '#dc2626', '#0891b2']
 
+interface StoreUser {
+  id: string
+  full_name: string | null
+  email: string | null
+  role: string | null
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [chartData, setChartData] = useState<{ month: string; receipts: number; issues: number }[]>([])
@@ -27,6 +34,9 @@ export default function DashboardPage() {
   const [recentGRNs, setRecentGRNs] = useState<any[]>([])
   const [recentVouchers, setRecentVouchers] = useState<any[]>([])
   const [lowStockItems, setLowStockItems] = useState<any[]>([])
+  const [users, setUsers] = useState<StoreUser[]>([])
+  const [selectedUser, setSelectedUser] = useState<StoreUser | null>(null)
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
@@ -35,10 +45,10 @@ export default function DashboardPage() {
   async function loadDashboard() {
     setLoading(true)
     try {
-      // Executing concurrent database lookups securely
+      // Executing concurrent database lookups securely, adding profiles/users lookup
       const [
         itemsRes, grnRes, voucherRes, suppRes, deptRes,
-        recentGRNRes, recentVoucherRes, catRes
+        recentGRNRes, recentVoucherRes, catRes, usersRes
       ] = await Promise.all([
         supabase.from('inventory_items').select('id, name, item_code, quantity_in_stock, reorder_level, total_value, unit:units(abbreviation)').eq('is_active', true),
         supabase.from('goods_received_notes').select('id, status, total_value, received_date').eq('status', 'approved'),
@@ -48,12 +58,20 @@ export default function DashboardPage() {
         supabase.from('goods_received_notes').select('id, grn_number, supplier:suppliers(name), total_value, status, received_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('issue_vouchers').select('id, voucher_number, department:departments(name), total_value, status, request_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('inventory_items').select('category:categories(name), total_value').eq('is_active', true),
+        supabase.from('profiles').select('id, full_name, email, role').order('full_name', { ascending: true }) // Adjust table name if yours is 'users'
       ])
 
       const items = itemsRes.data ?? []
       const totalValue = items.reduce((s, i) => s + (i.total_value ?? 0), 0)
       const lowStockCount = items.filter(i => i.quantity_in_stock > 0 && i.quantity_in_stock <= i.reorder_level).length
       const outOfStock = items.filter(i => i.quantity_in_stock <= 0).length
+
+      // Set users dropdown items
+      const fetchedUsers = usersRes.data ?? []
+      setUsers(fetchedUsers)
+      if (fetchedUsers.length > 0 && !selectedUser) {
+        setSelectedUser(fetchedUsers[0]) // Defaults to the first user fetched
+      }
 
       // Monthly chart data (last 6 months)
       const months = Array.from({ length: 6 }, (_, i) => {
@@ -85,7 +103,7 @@ export default function DashboardPage() {
       })
       setCategoryData(Object.entries(catMap).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 6))
 
-      // Low stock - filtered and sorted locally to eliminate 400 parameter errors
+      // Low stock
       const lowItems = items
         .filter(i => i.quantity_in_stock <= i.reorder_level)
         .sort((a, b) => a.quantity_in_stock - b.quantity_in_stock)
@@ -124,14 +142,56 @@ export default function DashboardPage() {
   return (
     <div className="animate-in space-y-7">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="page-title">Dashboard</h1>
           <p className="page-subtitle">Navrongo Health Research Centre — Stores Overview</p>
         </div>
-        <button onClick={loadDashboard} className="btn-secondary">
-          <RefreshCw size={15} /> Refresh
-        </button>
+        
+        {/* User Dropdown & Action Controls */}
+        <div className="flex items-center gap-3 self-end md:self-auto relative">
+          
+          {/* Custom Dropdown Container */}
+          <div className="relative">
+            <button 
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="flex items-center gap-2 bg-white border border-gray-200 px-4 py-2 rounded-lg text-sm font-500 text-gray-700 shadow-sm hover:bg-gray-50 transition"
+            >
+              <Users size={16} className="text-gray-400" />
+              <span>{selectedUser ? (selectedUser.full_name ?? selectedUser.email) : 'Select User'}</span>
+              <ChevronDown size={14} className={`text-gray-400 transition-transform ${isDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 divide-y divide-gray-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                <div className="px-3 py-2 text-xs font-600 text-gray-400 bg-gray-50">Active Personnel</div>
+                <div className="max-h-60 overflow-y-auto">
+                  {users.map((user) => (
+                    <button
+                      key={user.id}
+                      onClick={() => {
+                        setSelectedUser(user)
+                        setIsDropdownOpen(false)
+                        // Optional: You could append user specific filtering logic here
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm flex flex-col hover:bg-gray-50 transition ${selectedUser?.id === user.id ? 'bg-amber-50/40 text-amber-900 font-500' : 'text-gray-700'}`}
+                    >
+                      <span className="truncate">{user.full_name ?? 'Unnamed User'}</span>
+                      <span className="text-xs text-gray-400 font-400 truncate">{user.role ?? user.email}</span>
+                    </button>
+                  ))}
+                  {users.length === 0 && (
+                    <div className="px-4 py-3 text-xs text-gray-400">No active users discovered.</div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button onClick={loadDashboard} className="btn-secondary whitespace-nowrap">
+            <RefreshCw size={15} /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -255,7 +315,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Bottom row */}
-      <div className="grid lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Recent GRNs */}
         <div className="card lg:col-span-1">
           <div className="flex items-center justify-between p-5 pb-3 border-b border-gray-50">
