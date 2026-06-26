@@ -79,6 +79,7 @@ export interface InventoryItem {
   bin_number: string | null
   is_active: boolean
   notes: string | null
+  expiry_date: string | null // 👈 Added this to match your Supabase column mapping
   created_at: string
   updated_at: string
   category?: Category
