@@ -8,7 +8,7 @@ import { formatCurrency, formatNumber, formatDate } from '@/lib/utils'
 import {
   Package, ArrowDownToLine, ArrowUpFromLine, AlertTriangle,
   Truck, Building2, TrendingUp, TrendingDown, BarChart2,
-  ShoppingCart, ClipboardCheck, Clock, RefreshCw, Users, ChevronDown
+  ShoppingCart, ClipboardCheck, Clock, RefreshCw, Users, ChevronDown, CalendarDays
 } from 'lucide-react'
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -16,7 +16,7 @@ import {
 } from 'recharts'
 import Link from 'next/link'
 import type { DashboardStats } from '@/types'
-import { format, subMonths, startOfMonth } from 'date-fns'
+import { format, subMonths, startOfMonth, isBefore, isAfter, addDays } from 'date-fns'
 
 const PIE_COLORS = ['#1a3a6b', '#c8963e', '#0e8a6e', '#7c3aed', '#dc2626', '#0891b2']
 
@@ -34,6 +34,8 @@ export default function DashboardPage() {
   const [recentGRNs, setRecentGRNs] = useState<any[]>([])
   const [recentVouchers, setRecentVouchers] = useState<any[]>([])
   const [lowStockItems, setLowStockItems] = useState<any[]>([])
+  const [expiryAlertItems, setExpiryAlertItems] = useState<any[]>([])
+  const [expiryStats, setExpiryStats] = useState({ expired: 0, soon: 0 })
   const [users, setUsers] = useState<StoreUser[]>([])
   const [selectedUser, setSelectedUser] = useState<StoreUser | null>(null)
   const [isDropdownOpen, setIsDropdownOpen] = useState(false)
@@ -45,12 +47,11 @@ export default function DashboardPage() {
   async function loadDashboard() {
     setLoading(true)
     try {
-      // Executing concurrent database lookups securely, adding profiles/users lookup
       const [
         itemsRes, grnRes, voucherRes, suppRes, deptRes,
         recentGRNRes, recentVoucherRes, catRes, usersRes
       ] = await Promise.all([
-        supabase.from('inventory_items').select('id, name, item_code, quantity_in_stock, reorder_level, total_value, unit:units(abbreviation)').eq('is_active', true),
+        supabase.from('inventory_items').select('id, name, item_code, quantity_in_stock, reorder_level, total_value, expiry_date, unit:units(abbreviation)').eq('is_active', true),
         supabase.from('goods_received_notes').select('id, status, total_value, received_date').eq('status', 'approved'),
         supabase.from('issue_vouchers').select('id, status, total_value, issued_date').eq('status', 'issued'),
         supabase.from('suppliers').select('id', { count: 'exact', head: true }).eq('is_active', true),
@@ -58,7 +59,7 @@ export default function DashboardPage() {
         supabase.from('goods_received_notes').select('id, grn_number, supplier:suppliers(name), total_value, status, received_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('issue_vouchers').select('id, voucher_number, department:departments(name), total_value, status, request_date').order('created_at', { ascending: false }).limit(5),
         supabase.from('inventory_items').select('category:categories(name), total_value').eq('is_active', true),
-        supabase.from('profiles').select('id, full_name, email, role').order('full_name', { ascending: true }) // Adjust table name if yours is 'users'
+        supabase.from('profiles').select('id, full_name, email, role').order('full_name', { ascending: true })
       ])
 
       const items = itemsRes.data ?? []
@@ -66,11 +67,38 @@ export default function DashboardPage() {
       const lowStockCount = items.filter(i => i.quantity_in_stock > 0 && i.quantity_in_stock <= i.reorder_level).length
       const outOfStock = items.filter(i => i.quantity_in_stock <= 0).length
 
-      // Set users dropdown items
+      // Compute Expiry Metrics
+      const today = new Date()
+      const ninetyDaysFromNow = addDays(today, 90)
+      let expiredCount = 0
+      let soonCount = 0
+
+      const expiryAlerts = items
+        .filter(i => i.expiry_date)
+        .map(i => {
+          const expDate = new Date(i.expiry_date)
+          let status: 'expired' | 'soon' | 'ok' = 'ok'
+          
+          if (isBefore(expDate, today)) {
+            status = 'expired'
+            expiredCount++
+          } else if (isBefore(expDate, ninetyDaysFromNow)) {
+            status = 'soon'
+            soonCount++
+          }
+          return { ...i, expiryStatus: status }
+        })
+        .filter(i => i.expiryStatus !== 'ok')
+        .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime())
+        .slice(0, 5)
+
+      setExpiryAlertItems(expiryAlerts)
+      setExpiryStats({ expired: expiredCount, soon: soonCount })
+
       const fetchedUsers = usersRes.data ?? []
       setUsers(fetchedUsers)
       if (fetchedUsers.length > 0 && !selectedUser) {
-        setSelectedUser(fetchedUsers[0]) // Defaults to the first user fetched
+        setSelectedUser(fetchedUsers[0])
       }
 
       // Monthly chart data (last 6 months)
@@ -148,10 +176,7 @@ export default function DashboardPage() {
           <p className="page-subtitle">Navrongo Health Research Centre — Stores Overview</p>
         </div>
         
-        {/* User Dropdown & Action Controls */}
         <div className="flex items-center gap-3 self-end md:self-auto relative">
-          
-          {/* Custom Dropdown Container */}
           <div className="relative">
             <button 
               onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -163,7 +188,7 @@ export default function DashboardPage() {
             </button>
 
             {isDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 divide-y divide-gray-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+              <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-100 rounded-xl shadow-lg z-50 divide-y divide-gray-50 overflow-hidden">
                 <div className="px-3 py-2 text-xs font-600 text-gray-400 bg-gray-50">Active Personnel</div>
                 <div className="max-h-60 overflow-y-auto">
                   {users.map((user) => (
@@ -172,7 +197,6 @@ export default function DashboardPage() {
                       onClick={() => {
                         setSelectedUser(user)
                         setIsDropdownOpen(false)
-                        // Optional: You could append user specific filtering logic here
                       }}
                       className={`w-full text-left px-4 py-2.5 text-sm flex flex-col hover:bg-gray-50 transition ${selectedUser?.id === user.id ? 'bg-amber-50/40 text-amber-900 font-500' : 'text-gray-700'}`}
                     >
@@ -180,9 +204,6 @@ export default function DashboardPage() {
                       <span className="text-xs text-gray-400 font-400 truncate">{user.role ?? user.email}</span>
                     </button>
                   ))}
-                  {users.length === 0 && (
-                    <div className="px-4 py-3 text-xs text-gray-400">No active users discovered.</div>
-                  )}
                 </div>
               </div>
             )}
@@ -194,7 +215,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards Row 1 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total Stock Value"
@@ -219,56 +240,28 @@ export default function DashboardPage() {
           alert={stats?.low_stock_items ? 'Needs attention' : undefined}
         />
         <StatCard
-          label="Out of Stock"
-          value={formatNumber(stats?.out_of_stock_items ?? 0)}
-          icon={<ShoppingCart size={20} />}
+          label="Items Expired / Soon"
+          value={`${expiryStats.expired} / ${expiryStats.soon}`}
+          icon={<CalendarDays size={20} />}
           color="#dc2626"
-          badge="Critical"
-          alert={stats?.out_of_stock_items ? 'Reorder needed' : undefined}
+          badge="Batches"
+          alert={expiryStats.expired > 0 ? 'Critical expiration' : undefined}
         />
       </div>
 
+      {/* KPI Cards Row 2 */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label="Active Suppliers"
-          value={formatNumber(stats?.total_suppliers ?? 0)}
-          icon={<Truck size={20} />}
-          color="#7c3aed"
-          small
-        />
-        <StatCard
-          label="Departments"
-          value={formatNumber(stats?.total_departments ?? 0)}
-          icon={<Building2 size={20} />}
-          color="#0891b2"
-          small
-        />
-        <StatCard
-          label="Pending GRNs"
-          value={formatNumber(stats?.pending_grns ?? 0)}
-          icon={<ArrowDownToLine size={20} />}
-          color="#c8963e"
-          small
-        />
-        <StatCard
-          label="Pending Vouchers"
-          value={formatNumber(stats?.pending_requisitions ?? 0)}
-          icon={<ClipboardCheck size={20} />}
-          color="#1a3a6b"
-          small
-        />
+        <StatCard label="Active Suppliers" value={formatNumber(stats?.total_suppliers ?? 0)} icon={<Truck size={20} />} color="#7c3aed" small />
+        <StatCard label="Departments" value={formatNumber(stats?.total_departments ?? 0)} icon={<Building2 size={20} />} color="#0891b2" small />
+        <StatCard label="Pending GRNs" value={formatNumber(stats?.pending_grns ?? 0)} icon={<ArrowDownToLine size={20} />} color="#c8963e" small />
+        <StatCard label="Out of Stock Items" value={formatNumber(stats?.out_of_stock_items ?? 0)} icon={<ShoppingCart size={20} />} color="#64748b" small />
       </div>
 
-      {/* Charts row */}
+      {/* Charts Row */}
       <div className="grid lg:grid-cols-3 gap-5">
-        {/* Area chart */}
         <div className="card p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h3 className="font-display font-700 text-gray-900 text-base">Stock Movement (6 Months)</h3>
-              <p className="text-xs text-gray-400 mt-0.5">Receipts vs Issues by value (GHS)</p>
-            </div>
-          </div>
+          <h3 className="font-display font-700 text-gray-900 text-base">Stock Movement (6 Months)</h3>
+          <p className="text-xs text-gray-400 mt-0.5 mb-5">Receipts vs Issues by value (GHS)</p>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={chartData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
               <defs>
@@ -291,15 +284,13 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Pie chart */}
         <div className="card p-5">
           <h3 className="font-display font-700 text-gray-900 text-base mb-1">Stock by Category</h3>
           <p className="text-xs text-gray-400 mb-4">Value distribution</p>
           {categoryData.length > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie data={categoryData} cx="50%" cy="50%" innerRadius={55} outerRadius={85}
-                  dataKey="value" paddingAngle={3}>
+                <Pie data={categoryData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={3}>
                   {categoryData.map((_, i) => (
                     <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                   ))}
@@ -314,7 +305,68 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Bottom row */}
+      {/* Alerts Row: Low Stock & Expiry Panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Low stock alerts */}
+        <div className="card">
+          <div className="flex items-center justify-between p-5 pb-3 border-b border-gray-50">
+            <h3 className="font-display font-700 text-gray-900 text-sm flex items-center gap-2">
+              <AlertTriangle size={14} className="text-amber-500" /> Low Stock Alerts
+            </h3>
+            <Link href="/inventory?filter=low_stock" className="text-xs text-amber-600 hover:underline font-600">View all</Link>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {lowStockItems.length === 0 && <div className="p-5 text-sm text-gray-400">All stock levels OK</div>}
+            {lowStockItems.map((item) => (
+              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-600 text-gray-800 truncate">{item.name}</div>
+                  <div className="text-xs text-gray-400">{item.item_code}</div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <div className={`text-sm font-700 ${item.quantity_in_stock <= 0 ? 'text-red-600' : 'text-amber-600'}`}>
+                    {item.quantity_in_stock <= 0 ? 'Out' : `${item.quantity_in_stock} ${item.unit?.abbreviation ?? ''}`}
+                  </div>
+                  <div className="text-xs text-gray-400">of {item.reorder_level} reorder level</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Expiry alerts table */}
+        <div className="card">
+          <div className="flex items-center justify-between p-5 pb-3 border-b border-gray-50">
+            <h3 className="font-display font-700 text-gray-900 text-sm flex items-center gap-2">
+              <CalendarDays size={14} className="text-red-500" /> Expiry Status Alerts
+            </h3>
+            <Link href="/inventory?filter=expiry" className="text-xs text-amber-600 hover:underline font-600">View all</Link>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {expiryAlertItems.length === 0 && <div className="p-5 text-sm text-gray-400">No expiring items within 90 days.</div>}
+            {expiryAlertItems.map((item) => (
+              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-600 text-gray-800 truncate">{item.name}</div>
+                  <div className="text-xs text-gray-400">Code: {item.item_code}</div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <div className="text-sm font-700 text-gray-800">{formatDate(item.expiry_date)}</div>
+                  <span className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-700 border mt-0.5 ${
+                    item.expiryStatus === 'expired' 
+                      ? 'bg-red-50 text-red-700 border-red-200' 
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {item.expiryStatus === 'expired' ? 'Expired' : 'Expiring Soon'}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Transaction & System Personnel Tables */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Recent GRNs */}
         <div className="card lg:col-span-1">
@@ -362,30 +414,43 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Low stock */}
+        {/* Active Users/Personnel Overview */}
         <div className="card lg:col-span-1">
           <div className="flex items-center justify-between p-5 pb-3 border-b border-gray-50">
             <h3 className="font-display font-700 text-gray-900 text-sm flex items-center gap-2">
-              <AlertTriangle size={14} className="text-amber-500" /> Low Stock Alerts
+              <Users size={14} className="text-blue-600" /> Authorized Store Personnel
             </h3>
-            <Link href="/inventory?filter=low_stock" className="text-xs text-amber-600 hover:underline font-600">View all</Link>
           </div>
-          <div className="divide-y divide-gray-50">
-            {lowStockItems.length === 0 && <div className="p-5 text-sm text-gray-400">All stock levels OK</div>}
-            {lowStockItems.map((item) => (
-              <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-600 text-gray-800 truncate">{item.name}</div>
-                  <div className="text-xs text-gray-400">{item.item_code}</div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className={`text-sm font-700 ${item.quantity_in_stock <= 0 ? 'text-red-600' : 'text-amber-600'}`}>
-                    {item.quantity_in_stock <= 0 ? 'Out' : `${item.quantity_in_stock}`}
-                  </div>
-                  <div className="text-xs text-gray-400">of {item.reorder_level} reorder</div>
-                </div>
-              </div>
-            ))}
+          <div className="p-2">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-400 font-600 uppercase tracking-wider border-b border-gray-100">
+                    <th className="p-2.5">Name</th>
+                    <th className="p-2.5">Role</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {users.slice(0, 5).map((user) => (
+                    <tr key={user.id} className="hover:bg-gray-50/50 transition">
+                      <td className="p-2.5 font-500 text-gray-800">
+                        <div className="font-600">{user.full_name ?? 'Unnamed User'}</div>
+                        <div className="text-[10px] text-gray-400 truncate max-w-[150px]">{user.email}</div>
+                      </td>
+                      <td className="p-2.5">
+                        <span className={`inline-block uppercase tracking-wide text-[9px] font-700 px-2 py-0.5 rounded ${
+                          user.role === 'admin' ? 'bg-red-50 text-red-700 border border-red-100' :
+                          user.role === 'store_manager' ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                          'bg-blue-50 text-blue-700 border border-blue-100'
+                        }`}>
+                          {user.role?.replace('_', ' ') ?? 'Viewer'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -411,8 +476,7 @@ function StatCard({ label, value, icon, color, badge, alert, small }: {
   return (
     <div className="stat-card">
       <div className="flex items-start justify-between mb-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
-          style={{ background: color }}>
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: color }}>
           {icon}
         </div>
         {badge && !small && (
