@@ -4,9 +4,9 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { formatCurrency, formatNumber, getStockStatus, exportToCSV, generateExportFilename } from '@/lib/utils'
+import { formatCurrency, formatNumber, getStockStatus, exportToCSV, generateExportFilename, formatDate } from '@/lib/utils'
 import {
-  Plus, Search, Download, Edit2, Trash2, X, ChevronLeft, ChevronRight, Package, RefreshCw
+  Plus, Search, Download, Edit2, Trash2, X, ChevronLeft, ChevronRight, Package, RefreshCw, Calendar
 } from 'lucide-react'
 import type { InventoryItem, Category, Unit } from '@/types'
 
@@ -50,7 +50,6 @@ export default function InventoryPage() {
     if (search) q = q.ilike('name', `%${search}%`)
     if (categoryFilter) q = q.eq('category_id', categoryFilter)
 
-    // Note: Server-side pagination bounds are restricted when client-filtering non-indexed parameters
     if (!stockFilter) {
       q = q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1)
     }
@@ -58,7 +57,6 @@ export default function InventoryPage() {
     const { data, count } = await q
     let filtered = data ?? []
 
-    // Clean Local Evaluation Filters - Completely eliminates PostgREST 400 runtime validation errors
     if (stockFilter === 'low_stock') {
       filtered = filtered.filter(i => i.quantity_in_stock > 0 && i.quantity_in_stock <= i.reorder_level)
     } else if (stockFilter === 'out_of_stock') {
@@ -67,7 +65,6 @@ export default function InventoryPage() {
       filtered = filtered.filter(i => i.quantity_in_stock > i.reorder_level)
     }
 
-    // Adjust counts safely for active display
     if (stockFilter) {
       setItems(filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE))
       setTotal(filtered.length)
@@ -91,6 +88,7 @@ export default function InventoryPage() {
       'Total Value (GHS)': i.total_value,
       'Location': i.location ?? '',
       'Bin No': i.bin_number ?? '',
+      'Expiry Date': i.expiry_date ? formatDate(i.expiry_date) : '—',
     }))
     exportToCSV(rows, generateExportFilename('inventory'))
   }
@@ -156,17 +154,18 @@ export default function InventoryPage() {
                 <th className="text-right">Unit Cost</th>
                 <th className="text-right">Total Value</th>
                 <th>Location</th>
+                <th>Expiry Date</th>
                 <th>Status</th>
                 <th className="text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={11} className="text-center py-12 text-gray-400">
+                <tr><td colSpan={12} className="text-center py-12 text-gray-400">
                   <RefreshCw size={18} className="inline animate-spin mr-2" />Loading…
                 </td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={11} className="text-center py-12 text-gray-400">
+                <tr><td colSpan={12} className="text-center py-12 text-gray-400">
                   <Package size={32} className="mx-auto mb-2 opacity-30" />No items found
                 </td></tr>
               ) : items.map(item => {
@@ -185,6 +184,16 @@ export default function InventoryPage() {
                     <td className="text-right text-gray-700">{formatCurrency(item.unit_cost)}</td>
                     <td className="text-right font-700 text-gray-800">{formatCurrency(item.total_value)}</td>
                     <td className="text-gray-500 text-sm">{item.location ?? '—'}</td>
+                    <td className="text-sm text-gray-600">
+                      {item.expiry_date ? (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
+                          <Calendar size={13} className="text-gray-400" />
+                          {formatDate(item.expiry_date)}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge ${label === 'Out of Stock' ? 'bg-red-50 text-red-700 border-red-200' : label === 'Low Stock' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
                         {label}
@@ -276,6 +285,7 @@ function ItemModal({ item, categories, units, onClose, onSave }: {
     location: item?.location ?? '',
     bin_number: item?.bin_number ?? '',
     notes: item?.notes ?? '',
+    expiry_date: item?.expiry_date ?? '', // Added handling for item initialization
   })
 
   const set = (k: string, v: unknown) => setForm(f => ({ ...f, [k]: v }))
@@ -293,6 +303,7 @@ function ItemModal({ item, categories, units, onClose, onSave }: {
         unit_cost: Number(form.unit_cost),
         category_id: form.category_id || null,
         item_code: item?.item_code ?? '',
+        expiry_date: form.expiry_date || null, // Sends null to database if date picker is blanked out
       }
       if (item) {
         const { error: err } = await supabase.from('inventory_items').update(payload).eq('id', item.id)
@@ -363,6 +374,15 @@ function ItemModal({ item, categories, units, onClose, onSave }: {
             <div>
               <label className="block text-sm font-600 text-gray-700 mb-1.5">Bin Number</label>
               <input value={form.bin_number} onChange={e => set('bin_number', e.target.value)} className="form-input" placeholder="e.g. BIN-001" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Expiry Date</label>
+              <input 
+                type="date" 
+                value={form.expiry_date} 
+                onChange={e => set('expiry_date', e.target.value)} 
+                className="form-input" 
+              />
             </div>
             <div className="col-span-2">
               <label className="block text-sm font-600 text-gray-700 mb-1.5">Notes</label>
