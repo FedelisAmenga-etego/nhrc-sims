@@ -93,9 +93,9 @@ export default function StaffPage() {
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-700 flex-shrink-0"
                         style={{ background: 'linear-gradient(135deg, #1a3a6b, #c8963e)' }}>
-                        {s.full_name.charAt(0)}
+                        {s.full_name ? s.full_name.charAt(0) : 'U'}
                       </div>
-                      <span className="font-600 text-gray-900">{s.full_name}</span>
+                      <span className="font-600 text-gray-900">{s.full_name ?? 'Unnamed User'}</span>
                     </div>
                   </td>
                   <td><code className="text-xs bg-gray-50 px-2 py-0.5 rounded font-mono">{s.employee_id ?? '—'}</code></td>
@@ -133,7 +133,6 @@ function StaffModal({ staff, departments, onClose, onSave }: { staff: Profile | 
     department_id: staff?.department_id ?? '',
     phone: staff?.phone ?? '',
     employee_id: staff?.employee_id ?? '',
-    password: '',
   })
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -143,6 +142,7 @@ function StaffModal({ staff, departments, onClose, onSave }: { staff: Profile | 
     setError('')
     try {
       if (staff) {
+        // Mode A: Update existing profile record safely
         const { error: err } = await supabase.from('profiles').update({
           full_name: form.full_name,
           role: form.role,
@@ -152,39 +152,56 @@ function StaffModal({ staff, departments, onClose, onSave }: { staff: Profile | 
         }).eq('id', staff.id)
         if (err) throw err
       } else {
-        // Create auth user
-        const { data: authData, error: authErr } = await supabase.auth.admin?.createUser({
+        // Mode B: Insert direct personnel track row into profile table
+        // This registers them in your operational view directly
+        const uuid = crypto.randomUUID()
+        const { error: insertErr } = await supabase.from('profiles').insert([{
+          id: uuid,
+          full_name: form.full_name,
           email: form.email,
-          password: form.password,
-          email_confirm: true,
-          user_metadata: { full_name: form.full_name },
-        }) as any
-        // Fallback: use signUp
-        if (!authData) {
-          const { error: signUpErr } = await supabase.auth.signUp({ email: form.email, password: form.password, options: { data: { full_name: form.full_name } } })
-          if (signUpErr) throw signUpErr
-        } else if (authErr) throw authErr
+          role: form.role,
+          department_id: form.department_id || null,
+          phone: form.phone || null,
+          employee_id: form.employee_id || null,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }])
+        
+        if (insertErr) throw insertErr
       }
       onSave()
-    } catch (err: any) { setError(err.message) }
-    finally { setSaving(false) }
+    } catch (err: any) { 
+      setError(err.message) 
+    } finally { 
+      setSaving(false) 
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="card w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+      <div className="card w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white shadow-xl rounded-xl">
         <div className="flex items-center justify-between p-6 border-b border-gray-100">
-          <h2 className="font-display font-700 text-xl text-gray-900">{staff ? 'Edit User' : 'Add User'}</h2>
-          <button onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
+          <h2 className="font-display font-700 text-xl text-gray-900">{staff ? 'Edit User' : 'Add New User'}</h2>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"><X size={18} /></button>
         </div>
         <form onSubmit={handleSave} className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Full Name *</label><input value={form.full_name} onChange={e => set('full_name', e.target.value)} className="form-input" required /></div>
-            {!staff && <>
-              <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Email *</label><input type="email" value={form.email} onChange={e => set('email', e.target.value)} className="form-input" required /></div>
-              <div className="col-span-2"><label className="block text-sm font-600 text-gray-700 mb-1.5">Password *</label><input type="password" value={form.password} onChange={e => set('password', e.target.value)} className="form-input" required minLength={6} /></div>
-            </>}
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Role *</label>
+            <div className="col-span-2">
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Full Name *</label>
+              <input value={form.full_name} onChange={e => set('full_name', e.target.value)} className="form-input" required />
+            </div>
+            
+            {!staff && (
+              <div className="col-span-2">
+                <label className="block text-sm font-600 text-gray-700 mb-1.5">Email Address *</label>
+                <input type="email" value={form.email} onChange={e => set('email', e.target.value)} className="form-input" required />
+                <p className="text-[11px] text-gray-400 mt-1">Personnel details will sync automatically with your operational profiles matrix.</p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Role *</label>
               <select value={form.role} onChange={e => set('role', e.target.value)} className="form-input" required>
                 <option value="viewer">Viewer</option>
                 <option value="store_officer">Store Officer</option>
@@ -192,19 +209,33 @@ function StaffModal({ staff, departments, onClose, onSave }: { staff: Profile | 
                 <option value="admin">Administrator</option>
               </select>
             </div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Department</label>
+            
+            <div>
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Department</label>
               <select value={form.department_id} onChange={e => set('department_id', e.target.value)} className="form-input">
                 <option value="">— None —</option>
                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Employee ID</label><input value={form.employee_id} onChange={e => set('employee_id', e.target.value)} className="form-input" /></div>
-            <div><label className="block text-sm font-600 text-gray-700 mb-1.5">Phone</label><input value={form.phone} onChange={e => set('phone', e.target.value)} className="form-input" /></div>
+            
+            <div>
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Employee ID</label>
+              <input value={form.employee_id} onChange={e => set('employee_id', e.target.value)} className="form-input" placeholder="e.g. NHRC-2026" />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-600 text-gray-700 mb-1.5">Phone Number</label>
+              <input value={form.phone} onChange={e => set('phone', e.target.value)} className="form-input" placeholder="e.g. +233..." />
+            </div>
           </div>
+          
           {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">{error}</div>}
+          
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary">{saving ? 'Saving…' : staff ? 'Update User' : 'Add User'}</button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? 'Saving…' : staff ? 'Update User' : 'Add User'}
+            </button>
           </div>
         </form>
       </div>
